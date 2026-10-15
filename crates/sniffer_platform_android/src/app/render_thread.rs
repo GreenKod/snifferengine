@@ -177,7 +177,7 @@ pub fn spawn_render_thread(
                         }
                     }
 
-                    let current_state = shared_render_state.read().unwrap().clone();
+                    let mut current_state = shared_render_state.read().unwrap().clone();
                     let width = current_state.metrics.physical_width;
                     let height = current_state.metrics.physical_height;
 
@@ -193,7 +193,7 @@ pub fn spawn_render_thread(
                         needs_draw = true;
                     }
 
-                    const MAX_APP_ICONS_PER_FRAME: usize = 16;
+                    const MAX_APP_ICONS_PER_FRAME: usize = 2;
                     let mut icon_uploads = 0;
                     while icon_uploads < MAX_APP_ICONS_PER_FRAME
                         && let Some(res) = crate::jni::bridge::poll_async_app_icon()
@@ -204,7 +204,7 @@ pub fn spawn_render_thread(
                         icon_uploads += 1;
                     }
 
-                    const MAX_TEXTURE_UPLOADS_PER_FRAME: usize = 4;
+                    const MAX_TEXTURE_UPLOADS_PER_FRAME: usize = 2;
                     for res in crate::image_loader::poll_async_images(MAX_TEXTURE_UPLOADS_PER_FRAME)
                     {
                         if res.is_valid() {
@@ -228,6 +228,10 @@ pub fn spawn_render_thread(
                             match msg {
                                 RenderMessage::RequestRedraw => {
                                     needs_draw = true;
+                                    while let Ok(RenderMessage::RequestRedraw) =
+                                        render_rx.try_recv()
+                                    {}
+                                    current_state = shared_render_state.read().unwrap().clone();
                                 }
                                 RenderMessage::TerminateWindow(ack) => {
                                     pending_ack = ack;
@@ -249,7 +253,10 @@ pub fn spawn_render_thread(
 
                     #[allow(unused_variables)]
                     let render_start = std::time::Instant::now();
+                    let is_fresh_state = current_state.version != last_rendered_version;
                     last_rendered_version = current_state.version;
+                    let width = current_state.metrics.physical_width;
+                    let height = current_state.metrics.physical_height;
 
                     renderer.begin_frame(width, height);
 
@@ -298,20 +305,29 @@ pub fn spawn_render_thread(
                     }
 
                     renderer.end_frame();
-                    #[cfg(feature = "devkit")]
                     let draw_end = std::time::Instant::now();
 
                     egl.swap_buffers();
                     let _ = vsync_tx.try_send(());
-                    #[cfg(feature = "devkit")]
                     let swap_end = std::time::Instant::now();
 
-                    #[cfg(feature = "devkit")]
                     if let Ok(mut prof) = profiler.lock() {
-                        let total_nodes =
-                            sniffer_core::profiler::count_elements(&current_state.root_element);
-                        prof.record_entities(rendered_nodes, total_nodes);
-                        prof.record_frame(render_start, render_start, draw_end, swap_end);
+                        #[cfg(feature = "devkit")]
+                        {
+                            let total_nodes =
+                                sniffer_core::profiler::count_elements(&current_state.root_element);
+                            prof.record_entities(rendered_nodes, total_nodes);
+                        }
+                        if is_fresh_state {
+                            prof.record_frame_detailed(
+                                current_state.frame_start,
+                                current_state.layout_end,
+                                render_start,
+                                draw_end,
+                                swap_end,
+                                current_state.version,
+                            );
+                        }
                     }
                 }
             }

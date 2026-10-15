@@ -57,6 +57,9 @@ pub fn android_main(app: AndroidApp) {
     state.cached_screen_size = (initial_width, initial_height);
     state.refresh_rate = refresh_rate;
     state.idle_detector.set_refresh_rate(refresh_rate);
+    if let Ok(mut prof) = state.profiler.lock() {
+        prof.watchdog.set_refresh_rate(refresh_rate);
+    }
 
     sniffer_core::dev_log!(
         "[Display] Display: {initial_width}x{initial_height} @ {refresh_rate} Hz (density: {density})"
@@ -79,6 +82,7 @@ pub fn android_main(app: AndroidApp) {
 
     let mut root_element = initial_root.clone();
 
+    let init_time = std::time::Instant::now();
     let shared_render_state = Arc::new(RwLock::new(Arc::new(SharedRenderState {
         root_element: initial_root,
         layout_tree: initial_layout,
@@ -88,6 +92,8 @@ pub fn android_main(app: AndroidApp) {
         transition_manager: state.transition_manager.clone(),
         shaders_warmed_up: false,
         version: 0,
+        frame_start: init_time,
+        layout_end: init_time,
     })));
 
     let (render_tx, render_rx) = crossbeam_channel::unbounded::<RenderMessage>();
@@ -106,6 +112,26 @@ pub fn android_main(app: AndroidApp) {
     let mut last_frame_time = std::time::Instant::now();
 
     while state.running {
+        let has_active_physics = !state.kinetic_scrolls.is_empty()
+            || state
+                .scroll_physics
+                .values()
+                .any(ScrollPhysics::is_animating);
+
+        let has_active_transitions = state.transition_manager.is_animating();
+        let is_dragging = state.active_scrollview_drag.is_some();
+        let has_active_animation = has_active_physics || has_active_transitions || is_dragging;
+
+        let poll_timeout = Some(state.recommended_poll_timeout(has_active_animation));
+
+        let needs_redraw = events::poll_and_handle_events(
+            &app,
+            &mut state,
+            &mut root_element,
+            &render_tx,
+            poll_timeout,
+        );
+
         let frame_start = std::time::Instant::now();
         let raw_elapsed = frame_start.duration_since(last_frame_time).as_secs_f32();
         let target_frame_interval = 1.0 / state.refresh_rate.clamp(30.0, 240.0);
@@ -133,35 +159,29 @@ pub fn android_main(app: AndroidApp) {
             }
         }
 
+        let has_pending_actions = state.action_queue.lock().is_ok_and(|q| !q.is_empty());
+        let has_active_event = needs_redraw
+            || has_active_animation
+            || has_pending_actions
+            || !state.event_bus.is_empty();
+        if state.should_tick(state.last_tick_time, has_active_event) {
+            let tick_dt = state.last_tick_time.elapsed().as_secs_f32();
+            state.last_tick_time = std::time::Instant::now();
+
+            state.plugin_registry.tick();
+            if let Ok(mut reg) = state.pkg_registry.write() {
+                reg.tick_all(tick_dt);
+            }
+        }
+
         let current_ui_version =
             sniffer_core::types::UI_VERSION.load(std::sync::atomic::Ordering::Relaxed);
         let ui_changed = state.layout_dirty || (current_ui_version != state.last_ui_version);
-
-        let has_active_physics = !state.kinetic_scrolls.is_empty()
-            || state
-                .scroll_physics
-                .values()
-                .any(ScrollPhysics::is_animating);
-
-        let has_active_transitions = state.transition_manager.is_animating();
-        let is_dragging = state.active_scrollview_drag.is_some();
-        let has_active_animation = has_active_physics || has_active_transitions || is_dragging;
-
-        let poll_timeout = Some(state.recommended_poll_timeout(has_active_animation));
-
-        let needs_redraw = events::poll_and_handle_events(
-            &app,
-            &mut state,
-            &mut root_element,
-            &render_tx,
-            poll_timeout,
-        );
 
         let is_first_frame = matches!(
             &root_element,
             sniffer_core::types::Element::Container { children, .. } if children.is_empty()
         );
-        let has_pending_actions = state.action_queue.lock().is_ok_and(|q| !q.is_empty());
 
         let should_update = needs_redraw
             || ui_changed
@@ -172,17 +192,6 @@ pub fn android_main(app: AndroidApp) {
 
         let has_active_work = should_update || is_dragging || has_pending_actions;
         state.update_idle_state(has_active_work);
-
-        let has_active_event = has_active_work || !state.event_bus.is_empty();
-        if state.should_tick(state.last_tick_time, has_active_event) {
-            let tick_dt = state.last_tick_time.elapsed().as_secs_f32();
-            state.last_tick_time = std::time::Instant::now();
-
-            state.plugin_registry.tick();
-            if let Ok(mut reg) = state.pkg_registry.write() {
-                reg.tick_all(tick_dt);
-            }
-        }
 
         let mut rendered_this_frame = false;
         if should_update {
@@ -197,6 +206,7 @@ pub fn android_main(app: AndroidApp) {
                 dt,
                 ui_changed,
                 current_ui_version,
+                frame_start,
             );
             let _ = render_tx.send(RenderMessage::RequestRedraw);
             rendered_this_frame = true;

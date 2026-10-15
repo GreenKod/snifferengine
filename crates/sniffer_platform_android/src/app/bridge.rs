@@ -21,6 +21,8 @@ pub struct SharedRenderState {
     pub transition_manager: sniffer_core::anim::TransitionManager,
     pub shaders_warmed_up: bool,
     pub version: u64,
+    pub frame_start: std::time::Instant,
+    pub layout_end: std::time::Instant,
 }
 
 pub struct AndroidHostBridge;

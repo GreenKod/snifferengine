@@ -22,6 +22,7 @@ pub fn update_and_render_state(
     dt: f32,
     mut ui_changed: bool,
     current_ui_version: u64,
+    frame_start: std::time::Instant,
 ) {
     let (width, height) = if let Some(window) = app.native_window() {
         (
@@ -258,6 +259,7 @@ pub fn update_and_render_state(
         || !current_warmed_up;
 
     if needs_state_update {
+        let layout_end = std::time::Instant::now();
         state.render_state_version = state.render_state_version.wrapping_add(1);
         *shared_render_state.write().unwrap() = Arc::new(SharedRenderState {
             root_element: root_element.clone(),
@@ -268,6 +270,8 @@ pub fn update_and_render_state(
             transition_manager: state.transition_manager.clone(),
             shaders_warmed_up: current_warmed_up,
             version: state.render_state_version,
+            frame_start,
+            layout_end,
         });
     }
 }
