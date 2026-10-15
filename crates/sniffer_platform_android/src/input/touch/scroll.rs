@@ -113,7 +113,6 @@ pub fn handle_touch_move_or_down(
         }
     }
 
-
     // Hover management:
     // Touchscreens do not support cursor hover. Suppress expensive recursive
     // layout tree hit-testing and avoid spamming QuickJS runtimes with 120Hz
@@ -123,11 +122,11 @@ pub fn handle_touch_move_or_down(
     }
 
     #[cfg(feature = "devkit")]
-    let mut target_name = "None".to_string();
-    #[cfg(feature = "devkit")]
-    if let Some(sv_id) = state.active_scrollview_drag {
-        target_name = format!("sv_{sv_id:x}");
-    }
+    let target_name = if let Some(sv_id) = state.active_scrollview_drag {
+        format!("sv_{sv_id:x}")
+    } else {
+        "None".to_string()
+    };
 
     #[cfg(feature = "devkit")]
     {

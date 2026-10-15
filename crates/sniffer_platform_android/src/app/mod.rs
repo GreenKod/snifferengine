@@ -193,8 +193,7 @@ pub fn android_main(app: AndroidApp) {
         let has_active_work = should_update || is_dragging || has_pending_actions;
         state.update_idle_state(has_active_work);
 
-        let mut rendered_this_frame = false;
-        if should_update {
+        let rendered_this_frame = if should_update {
             // Drain any pending vsync tokens from previous frames before submitting the new frame
             while vsync_rx.try_recv().is_ok() {}
 
@@ -209,8 +208,10 @@ pub fn android_main(app: AndroidApp) {
                 frame_start,
             );
             let _ = render_tx.send(RenderMessage::RequestRedraw);
-            rendered_this_frame = true;
-        }
+            true
+        } else {
+            false
+        };
 
         let has_active_animation_after = !state.kinetic_scrolls.is_empty()
             || state.transition_manager.is_animating()

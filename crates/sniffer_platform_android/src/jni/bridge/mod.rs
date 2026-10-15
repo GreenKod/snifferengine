@@ -157,7 +157,7 @@ pub fn get_display_metrics() -> (f32, f32, f32, f32) {
             })();
 
             if res.is_err() {
-                let _ = env.exception_clear();
+                env.exception_clear();
             }
 
             Ok(res.ok())
@@ -219,7 +219,7 @@ pub fn get_display_refresh_rate() -> f32 {
             })();
 
             if res.is_err() {
-                let _ = env.exception_clear();
+                env.exception_clear();
             }
 
             Ok(res.ok())
@@ -268,7 +268,7 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                     _ => return Ok(()),
                 },
                 Err(_) => {
-                    let _ = env.exception_clear();
+                    env.exception_clear();
                     return Ok(());
                 }
             };
@@ -280,7 +280,7 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                 jni_sig!("(I)V"),
                 &[JValue::Int(0x0010_0004i32)],
             );
-            let _ = env.exception_clear();
+            env.exception_clear();
 
             // Edge-to-edge: window.setDecorFitsSystemWindows(false) (API 30+)
             let _ = env.call_method(
@@ -289,7 +289,7 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                 jni_sig!("(Z)V"),
                 &[JValue::Bool(false)],
             );
-            let _ = env.exception_clear();
+            env.exception_clear();
 
             // decorView.setSystemUiVisibility(LAYOUT_STABLE | LAYOUT_HIDE_NAVIGATION | LAYOUT_FULLSCREEN)
             if let Ok(decor_view_val) = env.call_method(
@@ -306,13 +306,13 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                             jni_sig!("(I)V"),
                             &[JValue::Int(0x0000_0100 | 0x0000_0200 | 0x0000_0400)],
                         );
-                        let _ = env.exception_clear();
+                        env.exception_clear();
                     }
                 } else {
-                    let _ = env.exception_clear();
+                    env.exception_clear();
                 }
             } else {
-                let _ = env.exception_clear();
+                env.exception_clear();
             }
 
             // Android 12+ (API 31+): setBlurBehindRadius on WindowManager.LayoutParams
@@ -330,7 +330,7 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                             jni_sig!("(I)V"),
                             &[JValue::Int(60i32)],
                         );
-                        let _ = env.exception_clear();
+                        env.exception_clear();
 
                         let _ = env.set_field(
                             &lp,
@@ -338,7 +338,7 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                             jni_sig!("I"),
                             JValue::Int(1i32),
                         );
-                        let _ = env.exception_clear();
+                        env.exception_clear();
 
                         let _ = env.call_method(
                             &window,
@@ -346,13 +346,13 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                             jni_sig!("(Landroid/view/WindowManager$LayoutParams;)V"),
                             &[JValue::Object(&lp)],
                         );
-                        let _ = env.exception_clear();
+                        env.exception_clear();
                     }
                 } else {
-                    let _ = env.exception_clear();
+                    env.exception_clear();
                 }
             } else {
-                let _ = env.exception_clear();
+                env.exception_clear();
             }
 
             let _ = env.call_method(
@@ -361,7 +361,7 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                 jni_sig!("(I)V"),
                 &[JValue::Int(0i32)],
             );
-            let _ = env.exception_clear();
+            env.exception_clear();
 
             let _ = env.call_method(
                 &window,
@@ -369,7 +369,7 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                 jni_sig!("(I)V"),
                 &[JValue::Int(0i32)],
             );
-            let _ = env.exception_clear();
+            env.exception_clear();
 
             let _ = env.call_method(
                 &window,
@@ -377,7 +377,7 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                 jni_sig!("(Z)V"),
                 &[JValue::Bool(false)],
             );
-            let _ = env.exception_clear();
+            env.exception_clear();
 
             let _ = env.call_method(
                 &window,
@@ -385,7 +385,7 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                 jni_sig!("(Z)V"),
                 &[JValue::Bool(false)],
             );
-            let _ = env.exception_clear();
+            env.exception_clear();
 
             let _ = env.call_method(
                 &window,
@@ -393,7 +393,7 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                 jni_sig!("(I)V"),
                 &[JValue::Int(-3i32)],
             );
-            let _ = env.exception_clear();
+            env.exception_clear();
 
             let _ = env.call_method(
                 &window,
@@ -401,7 +401,7 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
                 jni_sig!("(Landroid/graphics/drawable/Drawable;)V"),
                 &[JValue::Object(&jni::objects::JObject::null())],
             );
-            let _ = env.exception_clear();
+            env.exception_clear();
 
             Ok(())
         },

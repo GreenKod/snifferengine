@@ -208,7 +208,7 @@ pub fn update_and_render_state(
                         || phys.snap_just_completed
                         || state
                             .last_indicator_page
-                            .map_or(true, |p| (p - target_page_float).abs() > 0.002);
+                            .is_none_or(|p| (p - target_page_float).abs() > 0.002);
 
                     if page_moved {
                         let layout_mut = Arc::make_mut(&mut layout_tree);

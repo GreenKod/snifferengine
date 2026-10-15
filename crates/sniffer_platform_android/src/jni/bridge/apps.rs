@@ -48,7 +48,7 @@ fn get_apps_cache_path() -> Option<String> {
             })();
 
             if res.is_err() {
-                let _ = env.exception_clear();
+                env.exception_clear();
             }
 
             Ok(res.ok())
@@ -60,28 +60,27 @@ fn get_apps_cache_path() -> Option<String> {
 
 pub fn init_app_list_cache() {
     std::thread::spawn(|| {
-        if let Ok(list) = fetch_application_list_internal() {
-            let mut changed = true;
-            if let Ok(guard) = APP_LIST_CACHE.read() {
-                if let Some(old) = &*guard {
-                    if old == &list {
-                        changed = false;
-                    }
+        let list = fetch_application_list_internal();
+        let mut changed = true;
+        if let Ok(guard) = APP_LIST_CACHE.read() {
+            if let Some(old) = &*guard {
+                if old == &list {
+                    changed = false;
                 }
             }
-            if changed {
-                if let Some(path) = get_apps_cache_path() {
-                    if let Ok(json) = serde_json::to_string(&list) {
-                        let _ = std::fs::write(&path, json);
-                    }
+        }
+        if changed {
+            if let Some(path) = get_apps_cache_path() {
+                if let Ok(json) = serde_json::to_string(&list) {
+                    let _ = std::fs::write(&path, json);
                 }
-                if let Ok(mut guard) = APP_LIST_CACHE.write() {
-                    *guard = Some(list);
-                }
-                APP_LIST_UPDATED.store(true, Ordering::Release);
-                sniffer_core::types::UI_VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                crate::wake_app();
             }
+            if let Ok(mut guard) = APP_LIST_CACHE.write() {
+                *guard = Some(list);
+            }
+            APP_LIST_UPDATED.store(true, Ordering::Release);
+            sniffer_core::types::UI_VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            crate::wake_app();
         }
     });
 }
@@ -114,7 +113,7 @@ pub fn get_application_list() -> Result<Vec<AppInfo>, String> {
     Ok(Vec::new())
 }
 
-fn fetch_application_list_internal() -> Result<Vec<AppInfo>, String> {
+fn fetch_application_list_internal() -> Vec<AppInfo> {
     let jvm = vm();
 
     let app_list = jvm
@@ -270,7 +269,7 @@ fn fetch_application_list_internal() -> Result<Vec<AppInfo>, String> {
             })();
 
             if res.is_err() {
-                let _ = env.exception_clear();
+                env.exception_clear();
             }
 
             Ok(res.unwrap_or_default())
@@ -279,5 +278,5 @@ fn fetch_application_list_internal() -> Result<Vec<AppInfo>, String> {
 
     log::info!("[Apps] Total apps found: {}", app_list.len());
 
-    Ok(app_list)
+    app_list
 }

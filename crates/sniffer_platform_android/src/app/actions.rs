@@ -42,11 +42,11 @@ pub fn process_android_actions(
                                                             jni_sig!("(I)V"),
                                                             &[JValue::Int(8)], // WindowInsets.Type.ime()
                                                         );
-                                                        let _ = env.exception_clear();
+                                                        env.exception_clear();
                                                     }
                                                 }
                                             }
-                                            let _ = env.exception_clear();
+                                            env.exception_clear();
 
                                             // 2. Request focus on DecorView
                                             if let Ok(dv_val) = env.call_method(
@@ -63,14 +63,14 @@ pub fn process_android_actions(
                                                             jni_sig!("(Z)V"),
                                                             &[JValue::Bool(true)],
                                                         );
-                                                        let _ = env.exception_clear();
+                                                        env.exception_clear();
                                                         let _ = env.call_method(
                                                             &dv,
                                                             jni_str!("requestFocus"),
                                                             jni_sig!("()Z"),
                                                             &[],
                                                         );
-                                                        let _ = env.exception_clear();
+                                                        env.exception_clear();
                                                     }
                                                 }
                                             }
@@ -94,12 +94,12 @@ pub fn process_android_actions(
                                                     jni_sig!("(II)V"),
                                                     &[JValue::Int(2), JValue::Int(0)], // SHOW_FORCED
                                                 );
-                                                let _ = env.exception_clear();
+                                                env.exception_clear();
                                             }
                                         }
                                     }
                                 }
-                                let _ = env.exception_clear();
+                                env.exception_clear();
                             }
                             Ok(())
                         });
@@ -132,11 +132,11 @@ pub fn process_android_actions(
                                                         jni_sig!("(I)V"),
                                                         &[JValue::Int(8)], // WindowInsets.Type.ime()
                                                     );
-                                                    let _ = env.exception_clear();
+                                                    env.exception_clear();
                                                 }
                                             }
                                         }
-                                        let _ = env.exception_clear();
+                                        env.exception_clear();
 
                                         if let Ok(dv_val) = env.call_method(
                                             &win,
@@ -169,7 +169,7 @@ pub fn process_android_actions(
                                                                                     jni_sig!("(Landroid/os/IBinder;I)Z"),
                                                                                     &[(&token).into(), JValue::Int(0)],
                                                                                 );
-                                                                                let _ = env.exception_clear();
+                                                                                env.exception_clear();
                                                                             }
                                                                         }
                                                                     }
@@ -183,7 +183,7 @@ pub fn process_android_actions(
                                     }
                                 }
                             }
-                            let _ = env.exception_clear();
+                            env.exception_clear();
                         }
                         Ok(())
                     });

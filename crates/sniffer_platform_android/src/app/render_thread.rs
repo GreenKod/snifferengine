@@ -25,8 +25,11 @@ pub fn spawn_render_thread(
                 .cast::<jni::sys::JavaVM>();
             if !raw_vm.is_null() {
                 let mut env: *mut std::ffi::c_void = std::ptr::null_mut();
-                let _ =
-                    ((**raw_vm).v1_4.AttachCurrentThread)(raw_vm, &mut env, std::ptr::null_mut());
+                let _ = ((**raw_vm).v1_4.AttachCurrentThread)(
+                    raw_vm,
+                    &raw mut env,
+                    std::ptr::null_mut(),
+                );
             }
         }
         let mut egl_state: Option<EglContextState> = None;
@@ -228,9 +231,10 @@ pub fn spawn_render_thread(
                             match msg {
                                 RenderMessage::RequestRedraw => {
                                     needs_draw = true;
-                                    while let Ok(RenderMessage::RequestRedraw) =
-                                        render_rx.try_recv()
-                                    {}
+                                    while matches!(
+                                        render_rx.try_recv(),
+                                        Ok(RenderMessage::RequestRedraw)
+                                    ) {}
                                     current_state = shared_render_state.read().unwrap().clone();
                                 }
                                 RenderMessage::TerminateWindow(ack) => {
