@@ -192,18 +192,13 @@ pub fn android_main(app: AndroidApp) {
                 .values()
                 .any(ScrollPhysics::is_animating);
 
-        // When active UI updates or animations are in progress, pacing is governed directly
-        // by the render thread's hardware VSync (eglSwapBuffers) and the kernel epoll in poll_events.
-        // Artificially sleeping the main thread here causes phase misalignment with VSync,
-        // which pushes 16.6ms frames into 33.3ms jank.
-        // We only sleep if no update was performed and the application is in an idle state.
-        if !should_update && !has_active_animation_after && state.is_idle() {
-            let elapsed = frame_start.elapsed();
-            let target_frame_duration = state.target_frame_duration(false);
+        // Enforce frame pacing across active animations, standard UI updates, and idle state
+        // to prevent busy-loop spinning, ensure consistent delta time progression, and avoid CPU starvation.
+        let elapsed = frame_start.elapsed();
+        let target_frame_duration = state.target_frame_duration(has_active_animation_after);
 
-            if elapsed < target_frame_duration {
-                std::thread::sleep(target_frame_duration - elapsed);
-            }
+        if elapsed < target_frame_duration {
+            std::thread::sleep(target_frame_duration - elapsed);
         }
     }
 

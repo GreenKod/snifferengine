@@ -276,6 +276,29 @@ impl AnimState {
     }
 }
 
+/// Checks whether two styles differ in any animatable visual property.
+#[must_use]
+pub fn has_animatable_difference(a: &Style, b: &Style) -> bool {
+    (a.opacity - b.opacity).abs() >= 1e-4
+        || a.background_color != b.background_color
+        || a.text_color != b.text_color
+        || a.border_color != b.border_color
+        || (a.border_radius - b.border_radius).abs() >= 1e-4
+        || (a.backdrop_blur - b.backdrop_blur).abs() >= 1e-4
+        || a.backdrop_tint != b.backdrop_tint
+        || (a.border_width - b.border_width).abs() >= 1e-4
+        || (a.elevation - b.elevation).abs() >= 1e-4
+        || (a.shadow_blur - b.shadow_blur).abs() >= 1e-4
+        || (a.shadow_spread - b.shadow_spread).abs() >= 1e-4
+        || (a.shadow_offset_y - b.shadow_offset_y).abs() >= 1e-4
+        || a.shadow_color != b.shadow_color
+        || a.border_gradient != b.border_gradient
+        || (a.transform.scale - b.transform.scale).abs() >= 1e-4
+        || (a.transform.translate_x - b.transform.translate_x).abs() >= 1e-4
+        || (a.transform.translate_y - b.transform.translate_y).abs() >= 1e-4
+        || (a.transform.rotate - b.transform.rotate).abs() >= 1e-4
+}
+
 #[derive(Default, Clone)]
 pub struct TransitionManager {
     pub states: HashMap<String, AnimState>,
@@ -287,20 +310,22 @@ impl TransitionManager {
         if let Some(state) = self.states.get_mut(id) {
             // Only trigger transition if properties we care about actually changed.
             if state.target_style != *new_style {
-                state.start_style = state.current_style.clone();
-                state.target_style = new_style.clone();
-                state.time_elapsed = 0.0;
                 let trans = &new_style.transition;
                 let effective_delay = trans
                     .delay
                     .mul_add(1.0, (trans.stagger_index as f32) * trans.stagger_interval);
-                if trans.duration > 0.0
+                let has_transition = trans.duration > 0.0
                     || effective_delay > 0.0
-                    || matches!(trans.easing, Easing::Spring { .. })
-                {
+                    || matches!(trans.easing, Easing::Spring { .. });
+
+                if has_transition && has_animatable_difference(&state.target_style, new_style) {
+                    state.start_style = state.current_style.clone();
+                    state.target_style = new_style.clone();
+                    state.time_elapsed = 0.0;
                     state.is_active = true;
                 } else {
-                    // Instant apply
+                    // Instant apply or non-animatable property change (e.g. layout width, height)
+                    state.target_style = new_style.clone();
                     state.current_style = new_style.clone();
                     state.is_active = false;
                 }

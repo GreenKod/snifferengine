@@ -58,6 +58,7 @@ pub fn update_and_render_state(
 
         state.cached_layout = None;
         state.cached_max_scroll.clear();
+        state.last_indicator_page = None;
 
         sniffer_core::types::SCREEN_WIDTH
             .store(width.to_bits(), std::sync::atomic::Ordering::Relaxed);
@@ -199,19 +200,31 @@ pub fn update_and_render_state(
                     } else {
                         page_float
                     };
-                    let layout_mut = Arc::make_mut(&mut layout_tree);
-                    let indicator_changed = physics_sync::update_indicator_dots_tracking(
-                        root_element,
-                        Some(layout_mut),
-                        target_page_float,
-                        vmin_px,
-                    );
 
-                    if indicator_changed {
-                        if state.cached_layout.is_some() {
-                            state.cached_layout = Some(layout_tree.clone());
+                    let page_moved = phys.is_dragging
+                        || phys.vel_x.abs() > 0.001
+                        || phys.spring_sim_x.is_some()
+                        || phys.snap_just_completed
+                        || state
+                            .last_indicator_page
+                            .map_or(true, |p| (p - target_page_float).abs() > 0.002);
+
+                    if page_moved {
+                        let layout_mut = Arc::make_mut(&mut layout_tree);
+                        let indicator_changed = physics_sync::update_indicator_dots_tracking(
+                            root_element,
+                            Some(layout_mut),
+                            target_page_float,
+                            vmin_px,
+                        );
+                        state.last_indicator_page = Some(target_page_float);
+
+                        if indicator_changed {
+                            if state.cached_layout.is_some() {
+                                state.cached_layout = Some(layout_tree.clone());
+                            }
+                            physics_active = true;
                         }
-                        physics_active = true;
                     }
                 }
             }

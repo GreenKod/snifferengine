@@ -215,11 +215,10 @@ pub fn spawn_render_thread(
                         }
                     }
 
-                    let is_animating = current_state.transition_manager.is_animating();
                     let state_changed = current_state.version != last_rendered_version;
                     let needs_warmup = !current_state.shaders_warmed_up;
 
-                    if state_changed || is_animating || needs_warmup {
+                    if state_changed || needs_warmup {
                         needs_draw = true;
                     }
 

@@ -60,6 +60,7 @@ pub struct AppState {
     pub idle_detector: crate::idle::IdleDetector,
     pub last_interaction_time: std::time::Instant,
     pub last_tick_time: std::time::Instant,
+    pub last_indicator_page: Option<f32>,
 }
 
 impl AppState {
@@ -142,6 +143,7 @@ impl AppState {
             idle_detector,
             last_interaction_time,
             last_tick_time: std::time::Instant::now(),
+            last_indicator_page: None,
         }
     }
 
