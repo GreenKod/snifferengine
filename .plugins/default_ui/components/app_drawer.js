@@ -47,9 +47,9 @@ function AppDrawerCardComponent(app, index, isLandscape, isBottomFloor) {
         },
         transition: {
             duration: 0.35,
-            easing: { spring: { stiffness: 240, damping: 22 } },
-            stagger_index: index % 24,
-            stagger_interval: 0.018,
+            easing: { spring: { stiffness: 280, damping: 24 } },
+            stagger_index: index,
+            stagger_interval: 0.015,
         },
     }, [
         Container("drawer_icon_" + index, {

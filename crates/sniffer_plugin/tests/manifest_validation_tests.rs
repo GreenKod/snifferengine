@@ -916,3 +916,136 @@ fn test_app_drawer_frosted_glass_backdrop_blur_and_tint_stage_2_1() {
         );
     });
 }
+
+#[test]
+fn test_app_drawer_staggered_spring_cascade_stage_2_2() {
+    use rquickjs::{Context, Runtime};
+
+    let plugins_dir = get_plugins_dir();
+    let default_ui_dir = plugins_dir.join("default_ui");
+    let framework_path = plugins_dir.join("framework/sniffer_ui.js");
+
+    let rt = Runtime::new().unwrap();
+    let ctx = Context::full(&rt).unwrap();
+
+    ctx.with(|c| {
+        let setup = r"
+            globalThis.host_log = function() {};
+            globalThis.host_set_ui = function() {};
+            globalThis.host_screen_width = function() { return 1080; };
+            globalThis.host_screen_height = function() { return 2400; };
+            globalThis.requestPermissions = function(p) { return p; };
+            globalThis.registeredApis = {};
+            globalThis.registerApi = function(name, fn) { globalThis.registeredApis[name] = fn; };
+            globalThis.callApi = function(name, payload) {
+                return globalThis.registeredApis[name] ? globalThis.registeredApis[name](payload) : null;
+            };
+            globalThis.broadcastEvent = function() {};
+            globalThis.subscribeChannel = function() {};
+            globalThis.host_hash = function(s) {
+                let h = 0x811c9dc5;
+                for (let i = 0; i < s.length; i++) {
+                    h ^= s.charCodeAt(i);
+                    h = Math.imul(h, 0x01000193);
+                }
+                return (h >>> 0);
+            };
+            globalThis.SnifferUI = { forceUpdate: function() {} };
+            globalThis.Vault = { queryApps: function() { return { apps: [] }; } };
+            globalThis.getApplicationList = function() { return []; };
+            globalThis.host_is_devkit_enabled = function() { return false; };
+        ";
+        c.eval::<(), _>(setup).unwrap();
+
+        // Evaluate framework
+        let fw_code = fs::read_to_string(&framework_path).unwrap();
+        c.eval::<(), _>(fw_code).unwrap();
+
+        // Evaluate default_ui components
+        let state_code = fs::read_to_string(default_ui_dir.join("state.js")).unwrap();
+        c.eval::<(), _>(state_code).unwrap();
+
+        let layout_code = fs::read_to_string(default_ui_dir.join("components/layout.js")).unwrap();
+        c.eval::<(), _>(layout_code).unwrap();
+
+        let app_grid_code = fs::read_to_string(default_ui_dir.join("components/app_grid.js")).unwrap();
+        c.eval::<(), _>(app_grid_code).unwrap();
+
+        let app_drawer_code = fs::read_to_string(default_ui_dir.join("components/app_drawer.js")).unwrap();
+        c.eval::<(), _>(app_drawer_code).unwrap();
+
+        let main_code = fs::read_to_string(default_ui_dir.join("main.js")).unwrap();
+        c.eval::<(), _>(main_code.as_str()).unwrap();
+
+        fn find_element<'a>(
+            el: &'a sniffer_core::types::Element,
+            target_id: &str,
+        ) -> Option<&'a sniffer_core::types::Element> {
+            if el.id() == Some(target_id) {
+                return Some(el);
+            }
+            match el {
+                sniffer_core::types::Element::Container { children, .. }
+                | sniffer_core::types::Element::ScrollView { children, .. }
+                | sniffer_core::types::Element::SharedView { children, .. } => {
+                    for child in children {
+                        if let Some(found) = find_element(child, target_id) {
+                            return Some(found);
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            }
+        }
+
+        // 1. In top floor (drawer closed): cards are offset downwards (translate_y > 0) with opacity 0.0
+        let closed_ui_str: String = c.eval("JSON.stringify(AppDrawerComponent())").unwrap();
+        let closed_ui: sniffer_core::types::Element = serde_json::from_str(&closed_ui_str).unwrap();
+
+        let card_0_closed = find_element(&closed_ui, "drawer_card_0")
+            .expect("drawer_card_0 must exist in app drawer");
+        assert_eq!(card_0_closed.style().opacity, 0.0);
+        assert!(card_0_closed.style().transform.translate_y > 0.0);
+
+        // Stage 2.2 Verifications for transition parameters:
+        assert_eq!(
+            card_0_closed.style().transition.stagger_interval,
+            0.015,
+            "stagger_interval must be 0.015"
+        );
+        assert_eq!(
+            card_0_closed.style().transition.stagger_index,
+            0,
+            "stagger_index for card 0 must be 0"
+        );
+        match &card_0_closed.style().transition.easing {
+            sniffer_core::style::Easing::Spring { stiffness, damping } => {
+                assert_eq!(*stiffness, 280.0, "Spring stiffness must be 280");
+                assert_eq!(*damping, 24.0, "Spring damping must be 24");
+            }
+            other => panic!("expected Spring easing, got {other:?}"),
+        }
+
+        let card_1_closed = find_element(&closed_ui, "drawer_card_1")
+            .expect("drawer_card_1 must exist in app drawer");
+        assert_eq!(card_1_closed.style().transition.stagger_index, 1);
+
+        let card_2_closed = find_element(&closed_ui, "drawer_card_2")
+            .expect("drawer_card_2 must exist in app drawer");
+        assert_eq!(card_2_closed.style().transition.stagger_index, 2);
+
+        // 2. Open drawer by switching to bottom floor: cards transition to opacity 1.0 and translate_y 0.0
+        c.eval::<(), _>("state.goToBottomFloor();").unwrap();
+
+        let open_ui_str: String = c.eval("JSON.stringify(AppDrawerComponent())").unwrap();
+        let open_ui: sniffer_core::types::Element = serde_json::from_str(&open_ui_str).unwrap();
+
+        let card_0_open = find_element(&open_ui, "drawer_card_0")
+            .expect("drawer_card_0 must exist in open app drawer");
+        assert_eq!(card_0_open.style().opacity, 1.0);
+        assert_eq!(card_0_open.style().transform.translate_y, 0.0);
+        assert_eq!(card_0_open.style().transition.stagger_interval, 0.015);
+        assert_eq!(card_0_open.style().transition.stagger_index, 0);
+    });
+}
