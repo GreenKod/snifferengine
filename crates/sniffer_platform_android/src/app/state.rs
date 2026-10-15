@@ -15,9 +15,18 @@ pub struct KineticScroll {
     pub velocity_y: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum GestureAxis {
+    #[default]
+    Undetermined,
+    Horizontal,
+    Vertical,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 pub struct AppState {
     pub running: bool,
+    pub gesture_axis: GestureAxis,
     pub touch_start_pos: Point,
     pub last_touch_pos: Point,
     pub hovered_btn: Option<u64>,
@@ -42,14 +51,17 @@ pub struct AppState {
     pub cached_layout: Option<Arc<sniffer_core::layout::LayoutNode>>,
     pub cached_max_scroll: std::collections::HashMap<u64, f32>,
     pub last_ui_version: u64,
+    pub render_state_version: u64,
     pub layout_dirty: bool,
     pub memory_pressure_pending: bool,
     pub virtual_page_manager: sniffer_core::virtualization::VirtualPageManager,
     pub total_touch_drag_distance: f32,
     pub profiler: Arc<Mutex<sniffer_core::profiler::FrameProfiler>>,
     pub idle_detector: crate::idle::IdleDetector,
+    pub refresh_rate: f32,
     pub last_interaction_time: std::time::Instant,
     pub last_tick_time: std::time::Instant,
+    pub last_indicator_page: Option<f32>,
 }
 
 impl AppState {
@@ -66,6 +78,8 @@ impl AppState {
 
         if let Ok(apps) = crate::jni::get_application_list() {
             if !apps.is_empty() {
+                let pkg_names: Vec<String> = apps.iter().map(|a| a.package_name.clone()).collect();
+                crate::jni::bridge::prefetch_app_icons(&pkg_names);
                 let _ = plugin_registry
                     .vault()
                     .set_json("system.apps", &apps, "system");
@@ -91,11 +105,14 @@ impl AppState {
             &action_queue,
         );
 
-        let idle_detector = crate::idle::IdleDetector::default();
+        let refresh_rate = crate::jni::get_display_refresh_rate();
+        let mut idle_detector = crate::idle::IdleDetector::default();
+        idle_detector.set_refresh_rate(refresh_rate);
         let last_interaction_time = idle_detector.last_interaction_time();
 
         Self {
             running: true,
+            gesture_axis: GestureAxis::Undetermined,
             touch_start_pos: Point::zero(),
             last_touch_pos: Point::zero(),
             hovered_btn: None,
@@ -120,14 +137,17 @@ impl AppState {
             cached_layout: None,
             cached_max_scroll: std::collections::HashMap::new(),
             last_ui_version: 0,
+            render_state_version: 0,
             layout_dirty: true,
             memory_pressure_pending: false,
             virtual_page_manager: sniffer_core::virtualization::VirtualPageManager::new(),
             total_touch_drag_distance: 0.0,
             profiler,
             idle_detector,
+            refresh_rate,
             last_interaction_time,
             last_tick_time: std::time::Instant::now(),
+            last_indicator_page: None,
         }
     }
 

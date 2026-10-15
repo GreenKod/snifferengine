@@ -2,9 +2,8 @@
 //!
 //! Active under `#[cfg(feature = "devkit")]`.
 
-#[cfg(feature = "devkit")]
 use std::collections::VecDeque;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, Default)]
 pub struct TouchTelemetry {
@@ -16,6 +15,236 @@ pub struct TouchTelemetry {
     pub touch_to_render_us: f32,
 }
 
+/// Detailed breakdown of execution time across frame lifecycle phases.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FramePhaseMetrics {
+    /// Time spent on main thread: input dispatch, JS ticks, physics simulation, and layout calculation.
+    pub layout_and_physics_ms: f32,
+    /// Time spent waiting in channel / cross-thread queue before render thread picked up the state.
+    pub queue_latency_ms: f32,
+    /// Time spent on render thread drawing UI elements, Kawase blur passes, and batch buffers.
+    pub render_draw_ms: f32,
+    /// Time spent in `eglSwapBuffers` waiting for hardware display VSync.
+    pub swap_vsync_ms: f32,
+    /// Total end-to-end frame duration from user input to display presentation.
+    pub total_frame_ms: f32,
+}
+
+/// Identifies the primary bottleneck phase responsible for a frame deadline overrun.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JankBottleneck {
+    /// Main thread stalled in input processing, JS runtime execution, or layout recalculation.
+    LayoutAndPhysics,
+    /// Queue or synchronization bottleneck between main and render threads.
+    QueueLatency,
+    /// GPU rendering or fragment shader/blur overdraw stall.
+    RenderDraw,
+    /// Compositor backpressure or VSync missed deadline in `eglSwapBuffers`.
+    VsyncOrDriver,
+}
+
+impl std::fmt::Display for JankBottleneck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LayoutAndPhysics => write!(f, "Layout & Physics (Main Thread)"),
+            Self::QueueLatency => write!(f, "Thread Queue Latency"),
+            Self::RenderDraw => write!(f, "GPU Draw & Shaders (Render Thread)"),
+            Self::VsyncOrDriver => write!(f, "VSync / Compositor Backpressure"),
+        }
+    }
+}
+
+/// A recorded jank event containing detailed attribution diagnostics.
+#[derive(Clone, Debug)]
+pub struct JankEvent {
+    pub frame_number: u64,
+    pub total_ms: f32,
+    pub budget_ms: f32,
+    pub overrun_ms: f32,
+    pub refresh_rate: f32,
+    pub bottleneck: JankBottleneck,
+    pub bottleneck_ms: f32,
+    pub phases: FramePhaseMetrics,
+    pub timestamp: Instant,
+}
+
+/// Real-time frame pacing watchdog that measures execution deadlines and flags frame hitches.
+#[derive(Clone, Debug)]
+pub struct JankWatchdog {
+    refresh_rate: f32,
+    tolerance_ms: f32,
+    total_active_frames: u64,
+    jank_frame_count: u64,
+    last_jank_event: Option<JankEvent>,
+    jank_history: VecDeque<JankEvent>,
+    max_history: usize,
+}
+
+impl Default for JankWatchdog {
+    fn default() -> Self {
+        Self::new(60.0, 2.0)
+    }
+}
+
+impl JankWatchdog {
+    /// Creates a new `JankWatchdog` with the specified display refresh rate and overrun tolerance.
+    #[must_use]
+    pub fn new(refresh_rate: f32, tolerance_ms: f32) -> Self {
+        Self {
+            refresh_rate: if (30.0..=240.0).contains(&refresh_rate) {
+                refresh_rate
+            } else {
+                60.0
+            },
+            tolerance_ms: tolerance_ms.max(0.5),
+            total_active_frames: 0,
+            jank_frame_count: 0,
+            last_jank_event: None,
+            jank_history: VecDeque::with_capacity(32),
+            max_history: 32,
+        }
+    }
+
+    /// Updates the target hardware refresh rate in Hz (e.g. 60.0, 90.0, 120.0).
+    pub fn set_refresh_rate(&mut self, refresh_rate: f32) {
+        if (30.0..=240.0).contains(&refresh_rate) {
+            self.refresh_rate = refresh_rate;
+        }
+    }
+
+    /// Returns the target hardware refresh rate in Hz.
+    #[must_use]
+    pub fn refresh_rate(&self) -> f32 {
+        self.refresh_rate
+    }
+
+    /// Returns the single-frame time budget in milliseconds (e.g. 11.11ms for 90Hz).
+    #[must_use]
+    pub fn target_budget_ms(&self) -> f32 {
+        1000.0 / self.refresh_rate
+    }
+
+    /// Returns the configured tolerance threshold in milliseconds.
+    #[must_use]
+    pub fn tolerance_ms(&self) -> f32 {
+        self.tolerance_ms
+    }
+
+    /// Returns the absolute jank deadline in milliseconds (budget + tolerance).
+    #[must_use]
+    pub fn deadline_ms(&self) -> f32 {
+        self.target_budget_ms() + self.tolerance_ms
+    }
+
+    /// Evaluates a completed frame against the hardware display deadline.
+    /// Returns `Some(JankEvent)` if a deadline overrun was detected.
+    pub fn evaluate_frame(
+        &mut self,
+        frame_number: u64,
+        phases: FramePhaseMetrics,
+    ) -> Option<JankEvent> {
+        self.total_active_frames = self.total_active_frames.wrapping_add(1);
+        let budget_ms = self.target_budget_ms();
+        let deadline = budget_ms + self.tolerance_ms;
+
+        if phases.total_frame_ms > deadline {
+            self.jank_frame_count = self.jank_frame_count.wrapping_add(1);
+            let overrun_ms = phases.total_frame_ms - budget_ms;
+
+            // Determine the primary culprit phase
+            let mut bottleneck = JankBottleneck::LayoutAndPhysics;
+            let mut bottleneck_ms = phases.layout_and_physics_ms;
+
+            if phases.queue_latency_ms > bottleneck_ms {
+                bottleneck = JankBottleneck::QueueLatency;
+                bottleneck_ms = phases.queue_latency_ms;
+            }
+            if phases.render_draw_ms > bottleneck_ms {
+                bottleneck = JankBottleneck::RenderDraw;
+                bottleneck_ms = phases.render_draw_ms;
+            }
+            if phases.swap_vsync_ms > bottleneck_ms {
+                bottleneck = JankBottleneck::VsyncOrDriver;
+                bottleneck_ms = phases.swap_vsync_ms;
+            }
+
+            let event = JankEvent {
+                frame_number,
+                total_ms: phases.total_frame_ms,
+                budget_ms,
+                overrun_ms,
+                refresh_rate: self.refresh_rate,
+                bottleneck,
+                bottleneck_ms,
+                phases,
+                timestamp: Instant::now(),
+            };
+
+            crate::dev_warn!(
+                "[JANK WATCHDOG] ⚠️ Frame #{} delayed by +{:.1}ms! Total: {:.2}ms (Budget: {:.2}ms @ {:.0}Hz) | Primary bottleneck: {} ({:.2}ms) [Layout: {:.1}ms, Queue: {:.1}ms, Draw: {:.1}ms, Swap: {:.1}ms]",
+                event.frame_number,
+                event.overrun_ms,
+                event.total_ms,
+                event.budget_ms,
+                event.refresh_rate,
+                event.bottleneck,
+                event.bottleneck_ms,
+                event.phases.layout_and_physics_ms,
+                event.phases.queue_latency_ms,
+                event.phases.render_draw_ms,
+                event.phases.swap_vsync_ms
+            );
+
+            if self.jank_history.len() >= self.max_history {
+                self.jank_history.pop_front();
+            }
+            self.jank_history.push_back(event.clone());
+            self.last_jank_event = Some(event.clone());
+            Some(event)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the percentage of active frames that missed their presentation deadline.
+    #[must_use]
+    pub fn jank_percentage(&self) -> f32 {
+        if self.total_active_frames == 0 {
+            0.0
+        } else {
+            #[allow(clippy::cast_precision_loss)]
+            let ratio = (self.jank_frame_count as f32 / self.total_active_frames as f32) * 100.0;
+            ratio.clamp(0.0, 100.0)
+        }
+    }
+
+    /// Returns `true` if a jank event occurred within the specified recent duration.
+    #[must_use]
+    pub fn has_recent_jank(&self, duration: Duration) -> bool {
+        self.last_jank_event
+            .as_ref()
+            .is_some_and(|ev| ev.timestamp.elapsed() < duration)
+    }
+
+    /// Returns a reference to the most recent jank event, if one occurred.
+    #[must_use]
+    pub fn last_jank(&self) -> Option<&JankEvent> {
+        self.last_jank_event.as_ref()
+    }
+
+    /// Returns the total count of active frames evaluated.
+    #[must_use]
+    pub fn total_active_frames(&self) -> u64 {
+        self.total_active_frames
+    }
+
+    /// Returns the total count of jank frames detected.
+    #[must_use]
+    pub fn jank_count(&self) -> u64 {
+        self.jank_frame_count
+    }
+}
+
 #[cfg(feature = "devkit")]
 pub struct FrameProfiler {
     frame_times: VecDeque<f32>,
@@ -23,6 +252,7 @@ pub struct FrameProfiler {
     gpu_times: VecDeque<f32>,
     swap_times: VecDeque<f32>,
     max_history: usize,
+    pub watchdog: JankWatchdog,
     pub touch_telemetry: TouchTelemetry,
     pub rendered_entities: usize,
     pub total_entities: usize,
@@ -38,6 +268,7 @@ impl FrameProfiler {
             gpu_times: VecDeque::with_capacity(max_history),
             swap_times: VecDeque::with_capacity(max_history),
             max_history,
+            watchdog: JankWatchdog::default(),
             touch_telemetry: TouchTelemetry::default(),
             rendered_entities: 0,
             total_entities: 0,
@@ -49,17 +280,31 @@ impl FrameProfiler {
         self.total_entities = total;
     }
 
-    pub fn record_frame(
+    /// Records comprehensive 5-phase frame metrics and evaluates the jank watchdog.
+    pub fn record_frame_detailed(
         &mut self,
         frame_start: Instant,
+        layout_end: Instant,
         render_start: Instant,
         draw_end: Instant,
         swap_end: Instant,
+        frame_number: u64,
     ) {
-        let cpu_ms = render_start.duration_since(frame_start).as_secs_f32() * 1000.0;
-        let gpu_ms = draw_end.duration_since(render_start).as_secs_f32() * 1000.0;
-        let swap_ms = swap_end.duration_since(draw_end).as_secs_f32() * 1000.0;
-        let total_ms = swap_end.duration_since(frame_start).as_secs_f32() * 1000.0;
+        let layout_and_physics_ms = layout_end.duration_since(frame_start).as_secs_f32() * 1000.0;
+        let queue_latency_ms = render_start.duration_since(layout_end).as_secs_f32() * 1000.0;
+        let render_draw_ms = draw_end.duration_since(render_start).as_secs_f32() * 1000.0;
+        let swap_vsync_ms = swap_end.duration_since(draw_end).as_secs_f32() * 1000.0;
+        let total_frame_ms = swap_end.duration_since(frame_start).as_secs_f32() * 1000.0;
+
+        let phases = FramePhaseMetrics {
+            layout_and_physics_ms,
+            queue_latency_ms,
+            render_draw_ms,
+            swap_vsync_ms,
+            total_frame_ms,
+        };
+
+        self.watchdog.evaluate_frame(frame_number, phases);
 
         let push_limit = |vec: &mut VecDeque<f32>, val: f32, limit: usize| {
             if vec.len() >= limit {
@@ -68,10 +313,28 @@ impl FrameProfiler {
             vec.push_back(val);
         };
 
-        push_limit(&mut self.frame_times, total_ms, self.max_history);
-        push_limit(&mut self.cpu_times, cpu_ms, self.max_history);
-        push_limit(&mut self.gpu_times, gpu_ms, self.max_history);
-        push_limit(&mut self.swap_times, swap_ms, self.max_history);
+        push_limit(&mut self.frame_times, total_frame_ms, self.max_history);
+        push_limit(&mut self.cpu_times, layout_and_physics_ms, self.max_history);
+        push_limit(&mut self.gpu_times, render_draw_ms, self.max_history);
+        push_limit(&mut self.swap_times, swap_vsync_ms, self.max_history);
+    }
+
+    /// Backward-compatible convenience wrapper for 4-timestamp frame recording.
+    pub fn record_frame(
+        &mut self,
+        frame_start: Instant,
+        render_start: Instant,
+        draw_end: Instant,
+        swap_end: Instant,
+    ) {
+        self.record_frame_detailed(
+            frame_start,
+            render_start,
+            render_start,
+            draw_end,
+            swap_end,
+            0,
+        );
     }
 
     #[allow(clippy::cast_precision_loss)]
@@ -129,6 +392,7 @@ impl Default for FrameProfiler {
 #[cfg(not(feature = "devkit"))]
 #[derive(Clone, Debug, Default)]
 pub struct FrameProfiler {
+    pub watchdog: JankWatchdog,
     pub touch_telemetry: TouchTelemetry,
     pub rendered_entities: usize,
     pub total_entities: usize,
@@ -140,6 +404,7 @@ impl FrameProfiler {
     #[must_use]
     pub fn new(_max_history: usize) -> Self {
         Self {
+            watchdog: JankWatchdog::default(),
             touch_telemetry: TouchTelemetry::default(),
             rendered_entities: 0,
             total_entities: 0,
@@ -148,6 +413,33 @@ impl FrameProfiler {
 
     #[inline]
     pub fn record_entities(&mut self, _rendered: usize, _total: usize) {}
+
+    /// Evaluates jank watchdog in release mode without allocating frame history buffers.
+    pub fn record_frame_detailed(
+        &mut self,
+        frame_start: Instant,
+        layout_end: Instant,
+        render_start: Instant,
+        draw_end: Instant,
+        swap_end: Instant,
+        frame_number: u64,
+    ) {
+        let layout_and_physics_ms = layout_end.duration_since(frame_start).as_secs_f32() * 1000.0;
+        let queue_latency_ms = render_start.duration_since(layout_end).as_secs_f32() * 1000.0;
+        let render_draw_ms = draw_end.duration_since(render_start).as_secs_f32() * 1000.0;
+        let swap_vsync_ms = swap_end.duration_since(draw_end).as_secs_f32() * 1000.0;
+        let total_frame_ms = swap_end.duration_since(frame_start).as_secs_f32() * 1000.0;
+
+        let phases = FramePhaseMetrics {
+            layout_and_physics_ms,
+            queue_latency_ms,
+            render_draw_ms,
+            swap_vsync_ms,
+            total_frame_ms,
+        };
+
+        self.watchdog.evaluate_frame(frame_number, phases);
+    }
 
     #[inline]
     pub fn record_frame(
@@ -253,17 +545,6 @@ fn draw_touch_hitboxes(
         ),
     };
 
-    if is_button && layout.rect.width > 2.0 && layout.rect.height > 2.0 {
-        let is_dock = elem_id.as_ref().is_some_and(|k| k.contains("dock"));
-        let (fill_color, border_color) = if is_dock {
-            (0x284A_DE80_u32, Some(0xEE4A_DE80_u32))
-        } else {
-            (0x2038_BDF8_u32, Some(0xDD38_BDF8_u32))
-        };
-
-        renderer.draw_rect(layout.rect, fill_color, 4.0, 1.5, border_color);
-    }
-
     let tx = element.style().transform.translate_x;
     let ty = element.style().transform.translate_y;
     let safe_tx = if tx.is_nan() || tx.is_infinite() {
@@ -277,6 +558,22 @@ fn draw_touch_hitboxes(
         ty
     };
     let has_tx = safe_tx.abs() > 0.001 || safe_ty.abs() > 0.001;
+    let is_scroll_view = matches!(element, crate::types::Element::ScrollView { .. });
+
+    if has_tx && !is_scroll_view {
+        renderer.push_transform(0.0, 0.0, 1.0, 0.0, safe_tx, safe_ty);
+    }
+
+    if is_button && layout.rect.width > 2.0 && layout.rect.height > 2.0 {
+        let is_dock = elem_id.as_ref().is_some_and(|k| k.contains("dock"));
+        let (fill_color, border_color) = if is_dock {
+            (0x284A_DE80_u32, Some(0xEE4A_DE80_u32))
+        } else {
+            (0x2038_BDF8_u32, Some(0xDD38_BDF8_u32))
+        };
+
+        renderer.draw_rect(layout.rect, fill_color, 4.0, 1.5, border_color);
+    }
 
     match element {
         crate::types::Element::ScrollView {
@@ -312,17 +609,15 @@ fn draw_touch_hitboxes(
         }
         crate::types::Element::Container { children, .. }
         | crate::types::Element::SharedView { children, .. } => {
-            if has_tx {
-                renderer.push_transform(0.0, 0.0, 1.0, 0.0, safe_tx, safe_ty);
-            }
             for (child_el, child_lay) in children.iter().zip(layout.children.iter()) {
                 draw_touch_hitboxes(renderer, child_el, child_lay, effective_opacity);
             }
-            if has_tx {
-                renderer.pop_transform();
-            }
         }
         _ => {}
+    }
+
+    if has_tx && !is_scroll_view {
+        renderer.pop_transform();
     }
 }
 
@@ -335,17 +630,45 @@ pub fn render_devkit_debug_overlays(
     layout_tree: &crate::layout::LayoutNode,
 ) {
     static SHOW_DEBUG_OVERLAYS: std::sync::atomic::AtomicBool =
-        std::sync::atomic::AtomicBool::new(true);
-    static CHECKED_ENV: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        std::sync::atomic::AtomicBool::new(false);
+    static CHECK_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-    if !CHECKED_ENV.load(std::sync::atomic::Ordering::Relaxed) {
-        if let Ok(val) = std::env::var("SNIFFER_DEBUG_HITBOXES")
+    // Periodically re-check (every 60 frames) so adb setprop dynamically toggles overlays
+    let count = CHECK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if count % 60 == 0 {
+        #[allow(unused_mut)]
+        let mut enabled = std::env::var("SNIFFER_DEBUG_HITBOXES")
             .or_else(|_| std::env::var("SNIFFER_DEBUG_OVERLAYS"))
+            .is_ok_and(|val| val == "1" || val.eq_ignore_ascii_case("true"));
+
+        #[cfg(target_os = "android")]
         {
-            let disabled = val == "0" || val.eq_ignore_ascii_case("false");
-            SHOW_DEBUG_OVERLAYS.store(!disabled, std::sync::atomic::Ordering::Relaxed);
+            unsafe extern "C" {
+                fn __system_property_get(
+                    name: *const std::ffi::c_char,
+                    value: *mut std::ffi::c_char,
+                ) -> std::ffi::c_int;
+            }
+            let check_prop = |prop_name: &[u8]| -> Option<bool> {
+                let mut buf = [0u8; 92];
+                let len = unsafe {
+                    __system_property_get(prop_name.as_ptr().cast(), buf.as_mut_ptr().cast())
+                };
+                if len > 0 {
+                    let s = std::str::from_utf8(&buf[..len as usize]).ok()?;
+                    Some(s == "1" || s.eq_ignore_ascii_case("true"))
+                } else {
+                    None
+                }
+            };
+            if let Some(prop_val) = check_prop(b"debug.sniffer.overlays\0")
+                .or_else(|| check_prop(b"debug.sniffer.hitboxes\0"))
+            {
+                enabled = prop_val;
+            }
         }
-        CHECKED_ENV.store(true, std::sync::atomic::Ordering::Relaxed);
+
+        SHOW_DEBUG_OVERLAYS.store(enabled, std::sync::atomic::Ordering::Relaxed);
     }
 
     if !SHOW_DEBUG_OVERLAYS.load(std::sync::atomic::Ordering::Relaxed) {
@@ -363,6 +686,63 @@ pub fn render_devkit_debug_overlays(
         renderer.draw_circle(tx, ty, 10.0, 0x88FB_BF24);
         renderer.draw_circle(tx, ty, 4.0, 0xFFF5_9E0B);
     }
+
+    // 3. Performance & Jank Watchdog HUD Overlay Badge
+    let current_fps = profiler.current_fps();
+    let jank_pct = profiler.watchdog.jank_percentage();
+    let has_recent_jank = profiler
+        .watchdog
+        .has_recent_jank(std::time::Duration::from_millis(800));
+
+    let badge_x = 24.0;
+    let badge_y = 48.0;
+    let badge_w = 210.0;
+    let badge_h = 32.0;
+
+    let (bg_color, border_color) = if has_recent_jank {
+        (0xDD7F_1D1D, 0xFFEF_4444)
+    } else {
+        (0xCC0F_172A, 0xFF10_B981)
+    };
+
+    renderer.draw_rect(
+        crate::Rect::new(badge_x, badge_y, badge_w, badge_h),
+        bg_color,
+        8.0,
+        1.5,
+        Some(border_color),
+    );
+
+    let dot_color = if has_recent_jank {
+        0xFFEF_4444
+    } else {
+        0xFF10_B981
+    };
+    renderer.draw_circle(badge_x + 14.0, badge_y + 16.0, 4.5, dot_color);
+
+    let status_text = if has_recent_jank {
+        if let Some(jank) = profiler.watchdog.last_jank() {
+            let label = match jank.bottleneck {
+                JankBottleneck::LayoutAndPhysics => "Layout",
+                JankBottleneck::QueueLatency => "Queue",
+                JankBottleneck::RenderDraw => "GPU",
+                JankBottleneck::VsyncOrDriver => "VSync",
+            };
+            format!("JANK +{:.1}ms ({label})", jank.overrun_ms)
+        } else {
+            "JANK DETECTED".to_string()
+        }
+    } else {
+        format!("{current_fps:.0} FPS ({jank_pct:.1}% jank)")
+    };
+
+    renderer.draw_text(
+        &status_text,
+        badge_x + 26.0,
+        badge_y + 20.0,
+        12.0,
+        0xFFFF_FFFF,
+    );
 }
 
 /// Renders DevKit visualizer debug overlays (no-op when devkit feature is disabled).
@@ -374,4 +754,71 @@ pub fn render_devkit_debug_overlays(
     _root_element: &crate::types::Element,
     _layout_tree: &crate::layout::LayoutNode,
 ) {
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_jank_watchdog_nominal_frame_no_jank() {
+        let mut watchdog = JankWatchdog::new(90.0, 2.0);
+        assert_eq!(watchdog.target_budget_ms(), 1000.0 / 90.0);
+        assert_eq!(watchdog.deadline_ms(), (1000.0 / 90.0) + 2.0);
+
+        let phases = FramePhaseMetrics {
+            layout_and_physics_ms: 2.0,
+            queue_latency_ms: 0.5,
+            render_draw_ms: 2.0,
+            swap_vsync_ms: 4.0,
+            total_frame_ms: 8.5,
+        };
+
+        let jank = watchdog.evaluate_frame(1, phases);
+        assert!(jank.is_none());
+        assert_eq!(watchdog.jank_count(), 0);
+        assert_eq!(watchdog.total_active_frames(), 1);
+        assert_eq!(watchdog.jank_percentage(), 0.0);
+    }
+
+    #[test]
+    fn test_jank_watchdog_detects_layout_bottleneck() {
+        let mut watchdog = JankWatchdog::new(90.0, 2.0);
+        let phases = FramePhaseMetrics {
+            layout_and_physics_ms: 12.0,
+            queue_latency_ms: 0.5,
+            render_draw_ms: 2.0,
+            swap_vsync_ms: 3.5,
+            total_frame_ms: 18.0,
+        };
+
+        let jank = watchdog.evaluate_frame(2, phases);
+        assert!(jank.is_some());
+        let event = jank.unwrap();
+        assert_eq!(event.frame_number, 2);
+        assert_eq!(event.bottleneck, JankBottleneck::LayoutAndPhysics);
+        assert_eq!(event.bottleneck_ms, 12.0);
+        assert!(event.overrun_ms > 0.0);
+        assert_eq!(watchdog.jank_count(), 1);
+        assert_eq!(watchdog.jank_percentage(), 100.0);
+        assert!(watchdog.has_recent_jank(Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn test_jank_watchdog_detects_gpu_bottleneck() {
+        let mut watchdog = JankWatchdog::new(60.0, 2.0);
+        let phases = FramePhaseMetrics {
+            layout_and_physics_ms: 1.0,
+            queue_latency_ms: 0.5,
+            render_draw_ms: 18.0,
+            swap_vsync_ms: 4.0,
+            total_frame_ms: 23.5,
+        };
+
+        let jank = watchdog.evaluate_frame(3, phases);
+        assert!(jank.is_some());
+        let event = jank.unwrap();
+        assert_eq!(event.bottleneck, JankBottleneck::RenderDraw);
+        assert_eq!(event.bottleneck_ms, 18.0);
+    }
 }

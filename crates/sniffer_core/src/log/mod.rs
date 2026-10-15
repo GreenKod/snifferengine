@@ -42,6 +42,17 @@ macro_rules! dev_log {
 }
 
 #[macro_export]
+macro_rules! dev_warn {
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        #[cfg(target_os = "android")]
+        $crate::log::android_log(5, &msg);
+        #[cfg(not(target_os = "android"))]
+        eprintln!("{msg}");
+    }};
+}
+
+#[macro_export]
 macro_rules! dev_err {
     ($($arg:tt)*) => {{
         let msg = format!($($arg)*);

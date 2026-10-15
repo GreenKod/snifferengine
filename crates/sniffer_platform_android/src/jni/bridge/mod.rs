@@ -26,7 +26,7 @@ use std::sync::{Arc, OnceLock};
 static JVM: OnceLock<Arc<JavaVM>> = OnceLock::new();
 
 /// Returns the cached global `JavaVM` instance, initialising it on first call.
-pub(super) fn vm() -> Arc<JavaVM> {
+pub fn vm() -> Arc<JavaVM> {
     if let Some(vm) = JVM.get() {
         return Arc::clone(vm);
     }
@@ -41,7 +41,7 @@ pub(super) fn vm() -> Arc<JavaVM> {
 }
 
 /// Returns the Android context as a `JObject` tied to the given `Env` lifetime.
-pub(super) fn context<'local>(env: &Env<'local>) -> JObject<'local> {
+pub(crate) fn context<'local>(env: &Env<'local>) -> JObject<'local> {
     let android_context = ndk_context::android_context();
     let raw = android_context.context().cast::<jni::sys::_jobject>();
     if raw.is_null() {
@@ -98,66 +98,73 @@ pub fn start_activity(
 pub fn get_display_metrics() -> (f32, f32, f32, f32) {
     let jvm = vm();
 
-    jvm.attach_current_thread_for_scope::<_, _, JniError>(|env: &mut Env| {
-        let res = (|| -> Result<(f32, f32, f32, f32), JniError> {
-            let ctx = context(env);
+    jvm.attach_current_thread_for_scope::<_, _, JniError>(
+        |env: &mut Env| -> Result<Option<(f32, f32, f32, f32)>, JniError> {
+            let res = (|| -> Result<(f32, f32, f32, f32), JniError> {
+                let ctx = context(env);
+                if ctx.is_null() {
+                    return Err(JniError::NullPtr("context"));
+                }
 
-            let resources = env
-                .call_method(
-                    &ctx,
-                    jni_str!("getResources"),
-                    jni_sig!("()Landroid/content/res/Resources;"),
-                    &[],
-                )?
-                .l()?;
+                let resources = env
+                    .call_method(
+                        &ctx,
+                        jni_str!("getResources"),
+                        jni_sig!("()Landroid/content/res/Resources;"),
+                        &[],
+                    )?
+                    .l()?;
 
-            let display_metrics = env
-                .call_method(
-                    &resources,
-                    jni_str!("getDisplayMetrics"),
-                    jni_sig!("()Landroid/util/DisplayMetrics;"),
-                    &[],
-                )?
-                .l()?;
+                let display_metrics = env
+                    .call_method(
+                        &resources,
+                        jni_str!("getDisplayMetrics"),
+                        jni_sig!("()Landroid/util/DisplayMetrics;"),
+                        &[],
+                    )?
+                    .l()?;
 
-            let density = env
-                .get_field(&display_metrics, jni_str!("density"), jni_sig!("F"))?
-                .f()?;
+                let density = env
+                    .get_field(&display_metrics, jni_str!("density"), jni_sig!("F"))?
+                    .f()?;
 
-            let scaled_density = env
-                .get_field(&display_metrics, jni_str!("scaledDensity"), jni_sig!("F"))?
-                .f()?;
+                let scaled_density = env
+                    .get_field(&display_metrics, jni_str!("scaledDensity"), jni_sig!("F"))?
+                    .f()?;
 
-            let width_pixels = env
-                .get_field(&display_metrics, jni_str!("widthPixels"), jni_sig!("I"))?
-                .i()?;
+                let width_pixels = env
+                    .get_field(&display_metrics, jni_str!("widthPixels"), jni_sig!("I"))?
+                    .i()?;
 
-            let height_pixels = env
-                .get_field(&display_metrics, jni_str!("heightPixels"), jni_sig!("I"))?
-                .i()?;
+                let height_pixels = env
+                    .get_field(&display_metrics, jni_str!("heightPixels"), jni_sig!("I"))?
+                    .i()?;
 
-            #[allow(clippy::cast_precision_loss)]
-            let w = if width_pixels > 0 {
-                width_pixels as f32
-            } else {
-                1080.0
-            };
-            #[allow(clippy::cast_precision_loss)]
-            let h = if height_pixels > 0 {
-                height_pixels as f32
-            } else {
-                1920.0
-            };
+                #[allow(clippy::cast_precision_loss)]
+                let w = if width_pixels > 0 {
+                    width_pixels as f32
+                } else {
+                    1080.0
+                };
+                #[allow(clippy::cast_precision_loss)]
+                let h = if height_pixels > 0 {
+                    height_pixels as f32
+                } else {
+                    1920.0
+                };
 
-            Ok((density, scaled_density, w, h))
-        })();
+                Ok((density, scaled_density, w, h))
+            })();
 
-        if res.is_err() {
-            env.exception_clear();
-        }
+            if res.is_err() {
+                env.exception_clear();
+            }
 
-        res
-    })
+            Ok(res.ok())
+        },
+    )
+    .ok()
+    .flatten()
     .unwrap_or((1.0_f32, 1.0_f32, 1080.0_f32, 1920.0_f32))
 }
 
@@ -168,6 +175,60 @@ pub fn get_display_metrics() -> (f32, f32, f32, f32) {
 pub fn get_density() -> (f32, f32) {
     let (d, sd, _, _) = get_display_metrics();
     (d, sd)
+}
+
+/// Returns the hardware display refresh rate in Hz (e.g. 60.0, 90.0, 120.0).
+///
+/// Falls back to 60.0 if querying fails or returns an out-of-bounds value.
+#[must_use]
+pub fn get_display_refresh_rate() -> f32 {
+    let jvm = vm();
+
+    jvm.attach_current_thread_for_scope::<_, _, JniError>(
+        |env: &mut Env| -> Result<Option<f32>, JniError> {
+            let res = (|| -> Result<f32, JniError> {
+                let ctx = context(env);
+                if ctx.is_null() {
+                    return Err(JniError::NullPtr("context"));
+                }
+
+                let wm_str = env.new_string("window")?;
+                let wm = env
+                    .call_method(
+                        &ctx,
+                        jni_str!("getSystemService"),
+                        jni_sig!("(Ljava/lang/String;)Ljava/lang/Object;"),
+                        &[(&wm_str).into()],
+                    )?
+                    .l()?;
+
+                let display = env
+                    .call_method(
+                        &wm,
+                        jni_str!("getDefaultDisplay"),
+                        jni_sig!("()Landroid/view/Display;"),
+                        &[],
+                    )?
+                    .l()?;
+
+                let rate = env
+                    .call_method(&display, jni_str!("getRefreshRate"), jni_sig!("()F"), &[])?
+                    .f()?;
+
+                Ok(rate)
+            })();
+
+            if res.is_err() {
+                env.exception_clear();
+            }
+
+            Ok(res.ok())
+        },
+    )
+    .ok()
+    .flatten()
+    .filter(|&r| (30.0..=240.0).contains(&r))
+    .unwrap_or(60.0)
 }
 
 /// Sets `FLAG_SHOW_WALLPAPER` on the Activity's window.
@@ -181,152 +242,168 @@ pub fn set_show_wallpaper_flag(app: &android_activity::AndroidApp) {
     );
 
     let jvm = vm();
-    let _ = jvm.attach_current_thread_for_scope::<_, _, JniError>(|env: &mut Env| {
-        let activity_ptr = app.activity_as_ptr().cast::<jni::sys::_jobject>();
-        if activity_ptr.is_null() {
-            return Err(JniError::NullPtr("activity"));
-        }
-        let activity = unsafe { JObject::from_raw(env, activity_ptr) };
-        if activity.is_null() {
-            return Err(JniError::NullPtr("activity jobject"));
-        }
+    let _ = jvm.attach_current_thread_for_scope::<_, _, JniError>(
+        |env: &mut Env| -> Result<(), JniError> {
+            let (activity_ptr, activity) = {
+                let ptr = app.activity_as_ptr().cast::<jni::sys::_jobject>();
+                if ptr.is_null() {
+                    return Ok(());
+                }
+                let obj = unsafe { JObject::from_raw(env, ptr) };
+                if obj.is_null() {
+                    return Ok(());
+                }
+                (ptr, obj)
+            };
+            let _ = activity_ptr;
 
-        // window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER = 0x00100000)
-        let window = env
-            .call_method(
+            let window = match env.call_method(
                 &activity,
                 jni_str!("getWindow"),
                 jni_sig!("()Landroid/view/Window;"),
                 &[],
-            )?
-            .l()?;
+            ) {
+                Ok(v) => match v.l() {
+                    Ok(w) if !w.is_null() => w,
+                    _ => return Ok(()),
+                },
+                Err(_) => {
+                    env.exception_clear();
+                    return Ok(());
+                }
+            };
 
-        // window.addFlags(FLAG_SHOW_WALLPAPER = 0x00100000 | FLAG_BLUR_BEHIND = 0x00000004)
-        let _ = env.call_method(
-            &window,
-            jni_str!("addFlags"),
-            jni_sig!("(I)V"),
-            &[JValue::Int(0x0010_0004i32)],
-        );
-        env.exception_clear();
+            // window.addFlags(FLAG_SHOW_WALLPAPER = 0x00100000 | FLAG_BLUR_BEHIND = 0x00000004)
+            let _ = env.call_method(
+                &window,
+                jni_str!("addFlags"),
+                jni_sig!("(I)V"),
+                &[JValue::Int(0x0010_0004i32)],
+            );
+            env.exception_clear();
 
-        // Edge-to-edge: window.setDecorFitsSystemWindows(false) (API 30+)
-        let _ = env.call_method(
-            &window,
-            jni_str!("setDecorFitsSystemWindows"),
-            jni_sig!("(Z)V"),
-            &[JValue::Bool(false)],
-        );
-        env.exception_clear();
+            // Edge-to-edge: window.setDecorFitsSystemWindows(false) (API 30+)
+            let _ = env.call_method(
+                &window,
+                jni_str!("setDecorFitsSystemWindows"),
+                jni_sig!("(Z)V"),
+                &[JValue::Bool(false)],
+            );
+            env.exception_clear();
 
-        // decorView.setSystemUiVisibility(LAYOUT_STABLE | LAYOUT_HIDE_NAVIGATION | LAYOUT_FULLSCREEN)
-        if let Ok(decor_view_val) = env.call_method(
-            &window,
-            jni_str!("getDecorView"),
-            jni_sig!("()Landroid/view/View;"),
-            &[],
-        ) {
-            let decor_view = decor_view_val.l()?;
-            if !decor_view.is_null() {
-                let _ = env.call_method(
-                    &decor_view,
-                    jni_str!("setSystemUiVisibility"),
-                    jni_sig!("(I)V"),
-                    &[JValue::Int(0x0000_0700i32)],
-                );
+            // decorView.setSystemUiVisibility(LAYOUT_STABLE | LAYOUT_HIDE_NAVIGATION | LAYOUT_FULLSCREEN)
+            if let Ok(decor_view_val) = env.call_method(
+                &window,
+                jni_str!("getDecorView"),
+                jni_sig!("()Landroid/view/View;"),
+                &[],
+            ) {
+                if let Ok(decor_view) = decor_view_val.l() {
+                    if !decor_view.is_null() {
+                        let _ = env.call_method(
+                            &decor_view,
+                            jni_str!("setSystemUiVisibility"),
+                            jni_sig!("(I)V"),
+                            &[JValue::Int(0x0000_0100 | 0x0000_0200 | 0x0000_0400)],
+                        );
+                        env.exception_clear();
+                    }
+                } else {
+                    env.exception_clear();
+                }
+            } else {
                 env.exception_clear();
             }
-        }
 
-        // Android 12+ (API 31+): setBlurBehindRadius on WindowManager.LayoutParams
-        if let Ok(lp_val) = env.call_method(
-            &window,
-            jni_str!("getAttributes"),
-            jni_sig!("()Landroid/view/WindowManager$LayoutParams;"),
-            &[],
-        ) {
-            let lp = lp_val.l()?;
-            if !lp.is_null() {
-                let _ = env.call_method(
-                    &lp,
-                    jni_str!("setBlurBehindRadius"),
-                    jni_sig!("(I)V"),
-                    &[JValue::Int(60i32)],
-                );
-                env.exception_clear();
+            // Android 12+ (API 31+): setBlurBehindRadius on WindowManager.LayoutParams
+            if let Ok(lp_val) = env.call_method(
+                &window,
+                jni_str!("getAttributes"),
+                jni_sig!("()Landroid/view/WindowManager$LayoutParams;"),
+                &[],
+            ) {
+                if let Ok(lp) = lp_val.l() {
+                    if !lp.is_null() {
+                        let _ = env.call_method(
+                            &lp,
+                            jni_str!("setBlurBehindRadius"),
+                            jni_sig!("(I)V"),
+                            &[JValue::Int(60i32)],
+                        );
+                        env.exception_clear();
 
-                // lp.layoutInDisplayCutoutMode = 1 (LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES)
-                let _ = env.set_field(
-                    &lp,
-                    jni_str!("layoutInDisplayCutoutMode"),
-                    jni_sig!("I"),
-                    JValue::Int(1i32),
-                );
-                env.exception_clear();
+                        let _ = env.set_field(
+                            &lp,
+                            jni_str!("layoutInDisplayCutoutMode"),
+                            jni_sig!("I"),
+                            JValue::Int(1i32),
+                        );
+                        env.exception_clear();
 
-                let _ = env.call_method(
-                    &window,
-                    jni_str!("setAttributes"),
-                    jni_sig!("(Landroid/view/WindowManager$LayoutParams;)V"),
-                    &[JValue::Object(&lp)],
-                );
+                        let _ = env.call_method(
+                            &window,
+                            jni_str!("setAttributes"),
+                            jni_sig!("(Landroid/view/WindowManager$LayoutParams;)V"),
+                            &[JValue::Object(&lp)],
+                        );
+                        env.exception_clear();
+                    }
+                } else {
+                    env.exception_clear();
+                }
+            } else {
                 env.exception_clear();
             }
-        }
 
-        // window.setStatusBarColor(0)
-        let _ = env.call_method(
-            &window,
-            jni_str!("setStatusBarColor"),
-            jni_sig!("(I)V"),
-            &[JValue::Int(0i32)],
-        );
-        env.exception_clear();
+            let _ = env.call_method(
+                &window,
+                jni_str!("setStatusBarColor"),
+                jni_sig!("(I)V"),
+                &[JValue::Int(0i32)],
+            );
+            env.exception_clear();
 
-        // window.setNavigationBarColor(0)
-        let _ = env.call_method(
-            &window,
-            jni_str!("setNavigationBarColor"),
-            jni_sig!("(I)V"),
-            &[JValue::Int(0i32)],
-        );
-        env.exception_clear();
+            let _ = env.call_method(
+                &window,
+                jni_str!("setNavigationBarColor"),
+                jni_sig!("(I)V"),
+                &[JValue::Int(0i32)],
+            );
+            env.exception_clear();
 
-        // Android 10+ (API 29+): disable navigation bar & status bar contrast scrims
-        let _ = env.call_method(
-            &window,
-            jni_str!("setNavigationBarContrastEnforced"),
-            jni_sig!("(Z)V"),
-            &[JValue::Bool(false)],
-        );
-        env.exception_clear();
+            let _ = env.call_method(
+                &window,
+                jni_str!("setNavigationBarContrastEnforced"),
+                jni_sig!("(Z)V"),
+                &[JValue::Bool(false)],
+            );
+            env.exception_clear();
 
-        let _ = env.call_method(
-            &window,
-            jni_str!("setStatusBarContrastEnforced"),
-            jni_sig!("(Z)V"),
-            &[JValue::Bool(false)],
-        );
-        env.exception_clear();
+            let _ = env.call_method(
+                &window,
+                jni_str!("setStatusBarContrastEnforced"),
+                jni_sig!("(Z)V"),
+                &[JValue::Bool(false)],
+            );
+            env.exception_clear();
 
-        // window.setFormat(PixelFormat.TRANSLUCENT = -3)
-        let _ = env.call_method(
-            &window,
-            jni_str!("setFormat"),
-            jni_sig!("(I)V"),
-            &[JValue::Int(-3i32)],
-        );
-        env.exception_clear();
+            let _ = env.call_method(
+                &window,
+                jni_str!("setFormat"),
+                jni_sig!("(I)V"),
+                &[JValue::Int(-3i32)],
+            );
+            env.exception_clear();
 
-        // window.setBackgroundDrawable(null)
-        let _ = env.call_method(
-            &window,
-            jni_str!("setBackgroundDrawable"),
-            jni_sig!("(Landroid/graphics/drawable/Drawable;)V"),
-            &[JValue::Object(&jni::objects::JObject::null())],
-        );
-        env.exception_clear();
+            let _ = env.call_method(
+                &window,
+                jni_str!("setBackgroundDrawable"),
+                jni_sig!("(Landroid/graphics/drawable/Drawable;)V"),
+                &[JValue::Object(&jni::objects::JObject::null())],
+            );
+            env.exception_clear();
 
-        Ok(())
-    });
+            Ok(())
+        },
+    );
 }

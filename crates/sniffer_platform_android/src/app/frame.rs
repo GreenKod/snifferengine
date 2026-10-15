@@ -22,6 +22,7 @@ pub fn update_and_render_state(
     dt: f32,
     mut ui_changed: bool,
     current_ui_version: u64,
+    frame_start: std::time::Instant,
 ) {
     let (width, height) = if let Some(window) = app.native_window() {
         (
@@ -58,6 +59,7 @@ pub fn update_and_render_state(
 
         state.cached_layout = None;
         state.cached_max_scroll.clear();
+        state.last_indicator_page = None;
 
         sniffer_core::types::SCREEN_WIDTH
             .store(width.to_bits(), std::sync::atomic::Ordering::Relaxed);
@@ -108,7 +110,7 @@ pub fn update_and_render_state(
     }
 
     let layout_recalculated = state.layout_dirty || state.cached_layout.is_none();
-    let layout_tree = if !state.layout_dirty
+    let mut layout_tree = if !state.layout_dirty
         && let Some(ref cached) = state.cached_layout
     {
         cached.clone()
@@ -121,6 +123,11 @@ pub fn update_and_render_state(
             0.0,
         ));
         super::state::update_max_scroll_cache(state, root_element, &fresh);
+        sniffer_core::physics::sync_max_scroll_from_layout(
+            root_element,
+            &fresh,
+            &mut state.scroll_physics,
+        );
         state.cached_layout = Some(fresh.clone());
         state.layout_dirty = false;
         fresh
@@ -155,7 +162,6 @@ pub fn update_and_render_state(
     });
 
     let mut physics_active = false;
-    let vmin_px = width.min(height) / 100.0;
     let phys_ids: Vec<u64> = state.scroll_physics.keys().copied().collect();
     for sv_id in phys_ids {
         if let Some(phys) = state.scroll_physics.get_mut(&sv_id) {
@@ -167,8 +173,8 @@ pub fn update_and_render_state(
             if let Some(snap_width) = phys.snap_x {
                 if snap_width > 0.0 {
                     let max_page = (phys.page_count.unwrap_or(1) as i32 - 1).max(0);
-                    let current_page = (phys.pos_x / snap_width).round() as i32;
-                    let clamped_page = current_page.clamp(0, max_page) as usize;
+                    let page_float = (phys.pos_x / snap_width).clamp(0.0, max_page as f32);
+                    let clamped_page = page_float.round() as usize;
 
                     let page_window_changed = state.virtual_page_manager.update_predicted_page(
                         clamped_page,
@@ -189,16 +195,37 @@ pub fn update_and_render_state(
                         });
                     }
 
-                    let indicator_changed = physics_sync::update_indicator_dots_in_element(
-                        root_element,
-                        phys.last_snap_page,
-                        vmin_px,
-                    );
+                    let vmin_px = width.min(height) / 100.0;
+                    let target_page_float = if phys.snap_just_completed {
+                        clamped_page as f32
+                    } else {
+                        page_float
+                    };
 
-                    if indicator_changed {
-                        state.cached_layout = None;
-                        state.layout_dirty = true;
-                        physics_active = true;
+                    let page_moved = phys.is_dragging
+                        || phys.vel_x.abs() > 0.001
+                        || phys.spring_sim_x.is_some()
+                        || phys.snap_just_completed
+                        || state
+                            .last_indicator_page
+                            .is_none_or(|p| (p - target_page_float).abs() > 0.002);
+
+                    if page_moved {
+                        let layout_mut = Arc::make_mut(&mut layout_tree);
+                        let indicator_changed = physics_sync::update_indicator_dots_tracking(
+                            root_element,
+                            Some(layout_mut),
+                            target_page_float,
+                            vmin_px,
+                        );
+                        state.last_indicator_page = Some(target_page_float);
+
+                        if indicator_changed {
+                            if state.cached_layout.is_some() {
+                                state.cached_layout = Some(layout_tree.clone());
+                            }
+                            physics_active = true;
+                        }
                     }
                 }
             }
@@ -232,6 +259,8 @@ pub fn update_and_render_state(
         || !current_warmed_up;
 
     if needs_state_update {
+        let layout_end = std::time::Instant::now();
+        state.render_state_version = state.render_state_version.wrapping_add(1);
         *shared_render_state.write().unwrap() = Arc::new(SharedRenderState {
             root_element: root_element.clone(),
             layout_tree,
@@ -240,6 +269,9 @@ pub fn update_and_render_state(
             data_map: state.data_map.clone(),
             transition_manager: state.transition_manager.clone(),
             shaders_warmed_up: current_warmed_up,
+            version: state.render_state_version,
+            frame_start,
+            layout_end,
         });
     }
 }

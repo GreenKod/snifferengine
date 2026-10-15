@@ -36,6 +36,8 @@ pub(crate) fn draw_element_contents(
     final_alpha: f32,
     accumulated_scroll_x: f32,
     accumulated_scroll_y: f32,
+    accumulated_tx: f32,
+    accumulated_ty: f32,
     base_style: &sniffer_core::style::Style,
     rect: Rect,
     widget_id: Option<u64>,
@@ -56,6 +58,8 @@ pub(crate) fn draw_element_contents(
                     final_alpha,
                     accumulated_scroll_x,
                     accumulated_scroll_y,
+                    accumulated_tx,
+                    accumulated_ty,
                     is_animating,
                 );
             }
@@ -104,6 +108,8 @@ pub(crate) fn draw_element_contents(
                     final_alpha,
                     accumulated_scroll_x + safe_scroll_x,
                     accumulated_scroll_y + safe_scroll_y,
+                    accumulated_tx,
+                    accumulated_ty,
                     is_animating,
                 );
             }
@@ -159,12 +165,8 @@ pub(crate) fn draw_element_contents(
             if !renderer.has_image(img_id) {
                 if let Some(pkg_name) = src.strip_prefix("app-icon://") {
                     request_async_icon(pkg_name);
-                    let dummy_pixel = [0u8, 0u8, 0u8, 0u8];
-                    renderer.load_image(img_id, &dummy_pixel, 1, 1);
-                } else {
-                    let dummy_pixel = [0u8, 0u8, 0u8, 0u8];
-                    renderer.load_image(img_id, &dummy_pixel, 1, 1);
                 }
+                return 0;
             }
 
             renderer.draw_image(
@@ -174,21 +176,42 @@ pub(crate) fn draw_element_contents(
                 base_style.object_fit,
             );
         }
-        Element::TextInput { value, focused, .. } => {
+        Element::TextInput {
+            value,
+            focused,
+            placeholder,
+            ..
+        } => {
             renderer.push_clip_rect(rect, base_style.border_radius);
 
-            let display_text = if *focused {
-                format!("{value}_")
+            let (display_text, color) = if *focused {
+                (
+                    format!("{value}_"),
+                    base_style.text_color.unwrap_or(DEFAULT_TEXT_COLOR),
+                )
+            } else if value.is_empty() {
+                if let Some(ph) = placeholder.as_ref().filter(|s| !s.is_empty()) {
+                    (ph.clone(), 0x8894_A3B8)
+                } else {
+                    (
+                        String::new(),
+                        base_style.text_color.unwrap_or(DEFAULT_TEXT_COLOR),
+                    )
+                }
             } else {
-                value.clone()
+                (
+                    value.clone(),
+                    base_style.text_color.unwrap_or(DEFAULT_TEXT_COLOR),
+                )
             };
-            let color = base_style.text_color.unwrap_or(DEFAULT_TEXT_COLOR);
-            let ts = base_style.text_size;
 
+            let ts = base_style.text_size;
             let draw_y = rect.y + (rect.height - ts) / 2.0;
             let draw_x = rect.x + base_style.padding.left;
 
-            renderer.draw_text(&display_text, draw_x, draw_y, ts, color);
+            if !display_text.is_empty() {
+                renderer.draw_text(&display_text, draw_x, draw_y, ts, color);
+            }
 
             renderer.pop_clip_rect();
         }
