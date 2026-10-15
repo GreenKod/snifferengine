@@ -344,12 +344,10 @@ pub fn render_devkit_debug_overlays(
     // Periodically re-check (every 60 frames) so adb setprop dynamically toggles overlays
     let count = CHECK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if count % 60 == 0 {
-        let mut enabled = false;
-        if let Ok(val) = std::env::var("SNIFFER_DEBUG_HITBOXES")
+        #[allow(unused_mut)]
+        let mut enabled = std::env::var("SNIFFER_DEBUG_HITBOXES")
             .or_else(|_| std::env::var("SNIFFER_DEBUG_OVERLAYS"))
-        {
-            enabled = val == "1" || val.eq_ignore_ascii_case("true");
-        }
+            .is_ok_and(|val| val == "1" || val.eq_ignore_ascii_case("true"));
 
         #[cfg(target_os = "android")]
         {

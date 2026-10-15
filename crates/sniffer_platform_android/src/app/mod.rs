@@ -13,6 +13,7 @@ pub use state::{AppState, KineticScroll};
 use android_activity::AndroidApp;
 use sniffer_core::ScreenMetrics;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 #[allow(clippy::pedantic, clippy::too_many_lines)]
 pub fn android_main(app: AndroidApp) {
@@ -28,6 +29,7 @@ pub fn android_main(app: AndroidApp) {
     crate::jni::bridge::set_show_wallpaper_flag(&app);
 
     let (density, scaled_density, disp_w, disp_h) = crate::jni::get_display_metrics();
+    let refresh_rate = crate::jni::get_display_refresh_rate();
 
     let (initial_width, initial_height) = app.native_window().map_or((disp_w, disp_h), |window| {
         let w = f32::from(u16::try_from(window.width()).unwrap_or(0));
@@ -53,6 +55,12 @@ pub fn android_main(app: AndroidApp) {
     let mut state = AppState::new(&app);
     state.cached_density = (density, scaled_density);
     state.cached_screen_size = (initial_width, initial_height);
+    state.refresh_rate = refresh_rate;
+    state.idle_detector.set_refresh_rate(refresh_rate);
+
+    sniffer_core::dev_log!(
+        "[Display] Display: {initial_width}x{initial_height} @ {refresh_rate} Hz (density: {density})"
+    );
 
     let initial_root = sniffer_core::types::Element::Container {
         id: None,
@@ -83,6 +91,7 @@ pub fn android_main(app: AndroidApp) {
     })));
 
     let (render_tx, render_rx) = crossbeam_channel::unbounded::<RenderMessage>();
+    let (vsync_tx, vsync_rx) = crossbeam_channel::bounded::<()>(1);
 
     render_thread::spawn_render_thread(
         app.clone(),
@@ -91,16 +100,20 @@ pub fn android_main(app: AndroidApp) {
         state.profiler.clone(),
         Arc::clone(&state.pkg_registry),
         render_rx,
+        vsync_tx,
     );
 
     let mut last_frame_time = std::time::Instant::now();
 
     while state.running {
         let frame_start = std::time::Instant::now();
-        let dt = frame_start
-            .duration_since(last_frame_time)
-            .as_secs_f32()
-            .clamp(0.001, 0.033);
+        let raw_elapsed = frame_start.duration_since(last_frame_time).as_secs_f32();
+        let target_frame_interval = 1.0 / state.refresh_rate.clamp(30.0, 240.0);
+        let dt = if raw_elapsed > 0.050 {
+            target_frame_interval
+        } else {
+            raw_elapsed.clamp(0.001, 0.033)
+        };
         last_frame_time = frame_start;
 
         if crate::jni::bridge::apps::take_app_list_updated() {
@@ -171,7 +184,11 @@ pub fn android_main(app: AndroidApp) {
             }
         }
 
+        let mut rendered_this_frame = false;
         if should_update {
+            // Drain any pending vsync tokens from previous frames before submitting the new frame
+            while vsync_rx.try_recv().is_ok() {}
+
             frame::update_and_render_state(
                 &app,
                 &mut state,
@@ -182,6 +199,7 @@ pub fn android_main(app: AndroidApp) {
                 current_ui_version,
             );
             let _ = render_tx.send(RenderMessage::RequestRedraw);
+            rendered_this_frame = true;
         }
 
         let has_active_animation_after = !state.kinetic_scrolls.is_empty()
@@ -192,13 +210,19 @@ pub fn android_main(app: AndroidApp) {
                 .values()
                 .any(ScrollPhysics::is_animating);
 
-        // Enforce frame pacing across active animations, standard UI updates, and idle state
-        // to prevent busy-loop spinning, ensure consistent delta time progression, and avoid CPU starvation.
-        let elapsed = frame_start.elapsed();
-        let target_frame_duration = state.target_frame_duration(has_active_animation_after);
-
-        if elapsed < target_frame_duration {
-            std::thread::sleep(target_frame_duration - elapsed);
+        if rendered_this_frame && has_active_animation_after {
+            // Wait for hardware VSync completion signal from the render thread's swap_buffers().
+            // This locks the main thread's physics simulation and frame production in exact 1:1 cadence
+            // with the display panel refresh rate (60Hz, 90Hz, 120Hz), eliminating phase drift,
+            // skipped frames, and micro-jank.
+            // A timeout of 25ms ensures we never deadlock if the window is unbound or paused.
+            let _ = vsync_rx.recv_timeout(Duration::from_millis(25));
+        } else {
+            let elapsed = frame_start.elapsed();
+            let target_frame_duration = state.target_frame_duration(has_active_animation_after);
+            if elapsed < target_frame_duration {
+                std::thread::sleep(target_frame_duration - elapsed);
+            }
         }
     }
 

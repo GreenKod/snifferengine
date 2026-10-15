@@ -31,6 +31,8 @@ pub struct IdleDetector {
     idle_threshold: Duration,
     /// Throttle interval for periodic registry ticks during idle state.
     idle_tick_interval: Duration,
+    /// Physical display refresh rate in Hz (default: 60.0 Hz).
+    refresh_rate: f32,
 }
 
 impl Default for IdleDetector {
@@ -48,7 +50,45 @@ impl IdleDetector {
             last_interaction_time: Instant::now(),
             idle_threshold,
             idle_tick_interval: IDLE_TICK_INTERVAL,
+            refresh_rate: 60.0,
         }
+    }
+
+    /// Creates a new `IdleDetector` with a custom inactivity threshold and display refresh rate.
+    #[must_use]
+    pub fn with_refresh_rate(idle_threshold: Duration, refresh_rate: f32) -> Self {
+        Self {
+            is_idle: false,
+            last_interaction_time: Instant::now(),
+            idle_threshold,
+            idle_tick_interval: IDLE_TICK_INTERVAL,
+            refresh_rate: if (30.0..=240.0).contains(&refresh_rate) {
+                refresh_rate
+            } else {
+                60.0
+            },
+        }
+    }
+
+    /// Updates the configured display refresh rate in Hz.
+    pub fn set_refresh_rate(&mut self, refresh_rate: f32) {
+        if (30.0..=240.0).contains(&refresh_rate) {
+            self.refresh_rate = refresh_rate;
+        }
+    }
+
+    /// Returns the configured display refresh rate in Hz.
+    #[must_use]
+    pub fn refresh_rate(&self) -> f32 {
+        self.refresh_rate
+    }
+
+    /// Returns the physical frame interval duration corresponding to the display refresh rate.
+    #[must_use]
+    pub fn frame_interval(&self) -> Duration {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let micros = (1_000_000.0 / self.refresh_rate.clamp(30.0, 240.0)) as u64;
+        Duration::from_micros(micros)
     }
 
     /// Marks user or system activity, immediately resetting the idle flag
@@ -122,17 +162,16 @@ impl IdleDetector {
     }
 
     /// Returns the target frame pacing duration based on current idle state and active animations:
-    /// - `ACTIVE_FRAME_DURATION` (8ms, ~120 FPS) when physics, drag, or transitions are active.
+    /// - Physical refresh interval duration (e.g. 11.1ms for 90Hz, 16.6ms for 60Hz) when active.
     /// - `IDLE_FRAME_DURATION` (100ms, ~10 FPS) when the application is in an idle state.
-    /// - `STANDARD_FRAME_DURATION` (16ms, ~60 FPS) when active without high-refresh animations.
     #[must_use]
     pub fn target_frame_duration(&self, has_active_animation: bool) -> Duration {
         if has_active_animation {
-            ACTIVE_FRAME_DURATION
+            self.frame_interval()
         } else if self.is_idle {
             IDLE_FRAME_DURATION
         } else {
-            STANDARD_FRAME_DURATION
+            self.frame_interval()
         }
     }
 
@@ -170,14 +209,19 @@ mod tests {
     #[test]
     fn test_target_frame_duration() {
         let mut detector = IdleDetector::new(Duration::from_millis(15));
-        // Not idle, standard state -> STANDARD_FRAME_DURATION (16ms)
-        assert_eq!(
-            detector.target_frame_duration(false),
-            STANDARD_FRAME_DURATION
-        );
+        let expected_60hz = detector.frame_interval();
+        assert_eq!(detector.target_frame_duration(false), expected_60hz);
+        assert_eq!(detector.target_frame_duration(true), expected_60hz);
 
-        // Not idle, active animation -> ACTIVE_FRAME_DURATION (8ms)
-        assert_eq!(detector.target_frame_duration(true), ACTIVE_FRAME_DURATION);
+        // 90 Hz display pacing
+        detector.set_refresh_rate(90.0);
+        let expected_90hz = Duration::from_micros(11_111);
+        assert_eq!(detector.target_frame_duration(true), expected_90hz);
+
+        // 120 Hz display pacing
+        detector.set_refresh_rate(120.0);
+        let expected_120hz = Duration::from_micros(8_333);
+        assert_eq!(detector.target_frame_duration(true), expected_120hz);
 
         // Transition to idle
         sleep(Duration::from_millis(25));
@@ -187,8 +231,8 @@ mod tests {
         // Idle, no animation -> IDLE_FRAME_DURATION (100ms)
         assert_eq!(detector.target_frame_duration(false), IDLE_FRAME_DURATION);
 
-        // Idle, but active animation flag passed -> ACTIVE_FRAME_DURATION (8ms)
-        assert_eq!(detector.target_frame_duration(true), ACTIVE_FRAME_DURATION);
+        // Idle, but active animation flag passed -> expected_120hz
+        assert_eq!(detector.target_frame_duration(true), expected_120hz);
     }
 
     #[test]

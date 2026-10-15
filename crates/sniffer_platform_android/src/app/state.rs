@@ -58,6 +58,7 @@ pub struct AppState {
     pub total_touch_drag_distance: f32,
     pub profiler: Arc<Mutex<sniffer_core::profiler::FrameProfiler>>,
     pub idle_detector: crate::idle::IdleDetector,
+    pub refresh_rate: f32,
     pub last_interaction_time: std::time::Instant,
     pub last_tick_time: std::time::Instant,
     pub last_indicator_page: Option<f32>,
@@ -104,7 +105,9 @@ impl AppState {
             &action_queue,
         );
 
-        let idle_detector = crate::idle::IdleDetector::default();
+        let refresh_rate = crate::jni::get_display_refresh_rate();
+        let mut idle_detector = crate::idle::IdleDetector::default();
+        idle_detector.set_refresh_rate(refresh_rate);
         let last_interaction_time = idle_detector.last_interaction_time();
 
         Self {
@@ -141,6 +144,7 @@ impl AppState {
             total_touch_drag_distance: 0.0,
             profiler,
             idle_detector,
+            refresh_rate,
             last_interaction_time,
             last_tick_time: std::time::Instant::now(),
             last_indicator_page: None,

@@ -127,9 +127,5 @@ pub fn poll_and_handle_events(
         _ => {}
     });
 
-    if needs_redraw {
-        let _ = render_tx.send(RenderMessage::RequestRedraw);
-    }
-
     needs_redraw
 }

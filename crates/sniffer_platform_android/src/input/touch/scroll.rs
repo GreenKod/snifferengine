@@ -2,9 +2,7 @@ use android_activity::InputStatus;
 use android_activity::input::{MotionAction, MotionEvent};
 use sniffer_core::Point;
 use sniffer_core::ui::event::UiEvent;
-use sniffer_render::draw::{
-    find_clicked_button_with_scroll, find_hovered_button_with_scroll, find_hovered_scrollview,
-};
+use sniffer_render::draw::{find_clicked_button_with_scroll, find_hovered_scrollview};
 
 #[allow(clippy::implicit_hasher)]
 pub fn resolve_active_scroll(
@@ -119,57 +117,18 @@ pub fn handle_touch_move_or_down(
     let mut target_name = "None".to_string();
 
     // Hover management:
-    // When actively dragging/scrolling, touchscreens do not have cursor hover.
-    // Suppress expensive layout tree hit-testing and avoid spamming QuickJS runtimes
-    // with 120Hz UiEvent::Hover IPC messages.
-    if state.active_scrollview_drag.is_some() {
-        if let Some(prev) = state.hovered_btn.take() {
-            state.event_bus.push(UiEvent::HoverEnd(prev));
-        }
-        #[cfg(feature = "devkit")]
-        if let Some(sv_id) = state.active_scrollview_drag {
-            target_name = format!("sv_{sv_id:x}");
-        }
-    } else {
-        let prev_hovered = state.hovered_btn;
-        let hovered_data =
-            find_hovered_button_with_scroll(root_element, layout_tree, point, &|id_opt, sx, sy| {
-                resolve_active_scroll(&state.scroll_physics, id_opt, sx, sy)
-            });
-        state.hovered_btn = hovered_data.map(|(id, _)| id);
+    // Touchscreens do not support cursor hover. Suppress expensive recursive
+    // layout tree hit-testing and avoid spamming QuickJS runtimes with 120Hz
+    // UiEvent::Hover messages during touch moves.
+    if let Some(prev) = state.hovered_btn.take() {
+        state.event_bus.push(UiEvent::HoverEnd(prev));
+    }
 
-        #[cfg(feature = "devkit")]
-        if let Some((btn, _)) = hovered_data {
-            target_name = format!("btn_{btn:x}");
-        }
-
-        match (prev_hovered, hovered_data) {
-            (Some(prev), Some((current, rect))) if prev != current => {
-                state.event_bus.push(UiEvent::HoverEnd(prev));
-                state.event_bus.push(UiEvent::Hover(
-                    current,
-                    rect.width,
-                    rect.height,
-                    point.x - rect.x,
-                    point.y - rect.y,
-                ));
-            }
-            (None, Some((current, rect))) => {
-                state.event_bus.push(UiEvent::Hover(
-                    current,
-                    rect.width,
-                    rect.height,
-                    point.x - rect.x,
-                    point.y - rect.y,
-                ));
-            }
-            (Some(prev), None) => {
-                state.event_bus.push(UiEvent::HoverEnd(prev));
-            }
-            _ => {
-                // When prev == current, do NOT spam UiEvent::Hover on touch move.
-            }
-        }
+    #[cfg(feature = "devkit")]
+    let mut target_name = "None".to_string();
+    #[cfg(feature = "devkit")]
+    if let Some(sv_id) = state.active_scrollview_drag {
+        target_name = format!("sv_{sv_id:x}");
     }
 
     #[cfg(feature = "devkit")]

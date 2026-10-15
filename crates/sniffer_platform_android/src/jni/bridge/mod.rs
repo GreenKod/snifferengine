@@ -177,6 +177,60 @@ pub fn get_density() -> (f32, f32) {
     (d, sd)
 }
 
+/// Returns the hardware display refresh rate in Hz (e.g. 60.0, 90.0, 120.0).
+///
+/// Falls back to 60.0 if querying fails or returns an out-of-bounds value.
+#[must_use]
+pub fn get_display_refresh_rate() -> f32 {
+    let jvm = vm();
+
+    jvm.attach_current_thread_for_scope::<_, _, JniError>(
+        |env: &mut Env| -> Result<Option<f32>, JniError> {
+            let res = (|| -> Result<f32, JniError> {
+                let ctx = context(env);
+                if ctx.is_null() {
+                    return Err(JniError::NullPtr("context"));
+                }
+
+                let wm_str = env.new_string("window")?;
+                let wm = env
+                    .call_method(
+                        &ctx,
+                        jni_str!("getSystemService"),
+                        jni_sig!("(Ljava/lang/String;)Ljava/lang/Object;"),
+                        &[(&wm_str).into()],
+                    )?
+                    .l()?;
+
+                let display = env
+                    .call_method(
+                        &wm,
+                        jni_str!("getDefaultDisplay"),
+                        jni_sig!("()Landroid/view/Display;"),
+                        &[],
+                    )?
+                    .l()?;
+
+                let rate = env
+                    .call_method(&display, jni_str!("getRefreshRate"), jni_sig!("()F"), &[])?
+                    .f()?;
+
+                Ok(rate)
+            })();
+
+            if res.is_err() {
+                let _ = env.exception_clear();
+            }
+
+            Ok(res.ok())
+        },
+    )
+    .ok()
+    .flatten()
+    .filter(|&r| (30.0..=240.0).contains(&r))
+    .unwrap_or(60.0)
+}
+
 /// Sets `FLAG_SHOW_WALLPAPER` on the Activity's window.
 ///
 /// This allows the system wallpaper to be composited behind the transparent OpenGL surface.

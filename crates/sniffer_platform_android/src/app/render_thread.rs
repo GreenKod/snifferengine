@@ -16,6 +16,7 @@ pub fn spawn_render_thread(
     #[allow(unused_variables)] profiler: Arc<Mutex<sniffer_core::profiler::FrameProfiler>>,
     pkg_registry: Arc<RwLock<PackageRegistry>>,
     render_rx: crossbeam_channel::Receiver<RenderMessage>,
+    vsync_tx: crossbeam_channel::Sender<()>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         unsafe {
@@ -301,6 +302,7 @@ pub fn spawn_render_thread(
                     let draw_end = std::time::Instant::now();
 
                     egl.swap_buffers();
+                    let _ = vsync_tx.try_send(());
                     #[cfg(feature = "devkit")]
                     let swap_end = std::time::Instant::now();
 
