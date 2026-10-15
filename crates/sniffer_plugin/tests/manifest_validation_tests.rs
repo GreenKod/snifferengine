@@ -792,3 +792,127 @@ fn test_dock_plugin_long_press_preview_lifecycle() {
         assert!(find_element(&dismissed_ui, "dock_preview_bubble").is_none());
     });
 }
+
+#[test]
+fn test_app_drawer_frosted_glass_backdrop_blur_and_tint_stage_2_1() {
+    use rquickjs::{Context, Runtime};
+
+    let plugins_dir = get_plugins_dir();
+    let default_ui_dir = plugins_dir.join("default_ui");
+    let framework_path = plugins_dir.join("framework/sniffer_ui.js");
+
+    let rt = Runtime::new().unwrap();
+    let ctx = Context::full(&rt).unwrap();
+
+    ctx.with(|c| {
+        let setup = r"
+            globalThis.host_log = function() {};
+            globalThis.host_set_ui = function() {};
+            globalThis.host_screen_width = function() { return 1080; };
+            globalThis.host_screen_height = function() { return 2400; };
+            globalThis.requestPermissions = function(p) { return p; };
+            globalThis.registeredApis = {};
+            globalThis.registerApi = function(name, fn) { globalThis.registeredApis[name] = fn; };
+            globalThis.callApi = function(name, payload) {
+                return globalThis.registeredApis[name] ? globalThis.registeredApis[name](payload) : null;
+            };
+            globalThis.broadcastEvent = function() {};
+            globalThis.subscribeChannel = function() {};
+            globalThis.host_hash = function(s) {
+                let h = 0x811c9dc5;
+                for (let i = 0; i < s.length; i++) {
+                    h ^= s.charCodeAt(i);
+                    h = Math.imul(h, 0x01000193);
+                }
+                return (h >>> 0);
+            };
+            globalThis.SnifferUI = { forceUpdate: function() {} };
+            globalThis.Vault = { queryApps: function() { return { apps: [] }; } };
+            globalThis.getApplicationList = function() { return []; };
+            globalThis.host_is_devkit_enabled = function() { return false; };
+        ";
+        c.eval::<(), _>(setup).unwrap();
+
+        // Evaluate framework
+        let fw_code = fs::read_to_string(&framework_path).unwrap();
+        c.eval::<(), _>(fw_code).unwrap();
+
+        // Evaluate default_ui components
+        let state_code = fs::read_to_string(default_ui_dir.join("state.js")).unwrap();
+        c.eval::<(), _>(state_code).unwrap();
+
+        let layout_code = fs::read_to_string(default_ui_dir.join("components/layout.js")).unwrap();
+        c.eval::<(), _>(layout_code).unwrap();
+
+        let app_grid_code = fs::read_to_string(default_ui_dir.join("components/app_grid.js")).unwrap();
+        c.eval::<(), _>(app_grid_code).unwrap();
+
+        let app_drawer_code = fs::read_to_string(default_ui_dir.join("components/app_drawer.js")).unwrap();
+        c.eval::<(), _>(app_drawer_code).unwrap();
+
+        let main_code = fs::read_to_string(default_ui_dir.join("main.js")).unwrap();
+        if let Err(e) = c.eval::<(), _>(main_code.as_str()) {
+            let exc = c.catch();
+            panic!("eval main.js error: {e:?}, exc: {exc:?}");
+        }
+
+        // Helper to find element by ID recursively
+        fn find_element<'a>(
+            el: &'a sniffer_core::types::Element,
+            target_id: &str,
+        ) -> Option<&'a sniffer_core::types::Element> {
+            if el.id() == Some(target_id) {
+                return Some(el);
+            }
+            match el {
+                sniffer_core::types::Element::Container { children, .. }
+                | sniffer_core::types::Element::ScrollView { children, .. }
+                | sniffer_core::types::Element::SharedView { children, .. } => {
+                    for child in children {
+                        if let Some(found) = find_element(child, target_id) {
+                            return Some(found);
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            }
+        }
+
+        // Evaluate AppDrawerComponent directly and as part of Root
+        let drawer_ui_str: String = c
+            .eval("JSON.stringify(AppDrawerComponent())")
+            .unwrap();
+        let drawer_ui: sniffer_core::types::Element = serde_json::from_str(&drawer_ui_str).unwrap();
+
+        let drawer_root = find_element(&drawer_ui, "app_drawer_root")
+            .expect("app_drawer_root must be rendered by AppDrawerComponent");
+        let style = drawer_root.style();
+
+        // Stage 2.1 Verifications:
+        // 1. Fullscreen backdrop_blur must be 32.0
+        assert_eq!(style.backdrop_blur, 32.0, "App drawer backdrop_blur must be 32.0");
+
+        // 2. Dynamic tint must be 0x880A0E17
+        assert_eq!(
+            style.backdrop_tint,
+            Some(0x880A_0E17),
+            "App drawer backdrop_tint must be 0x880A0E17"
+        );
+
+        // 3. Fallback background_color must also match tint
+        assert_eq!(
+            style.background_color,
+            Some(0x880A_0E17),
+            "App drawer fallback background_color must be 0x880A0E17"
+        );
+
+        // 4. Verify Root() renders app_drawer_root
+        let root_ui_str: String = c.eval("JSON.stringify(Root())").unwrap();
+        let root_ui: sniffer_core::types::Element = serde_json::from_str(&root_ui_str).unwrap();
+        assert!(
+            find_element(&root_ui, "app_drawer_root").is_some(),
+            "Root UI must contain app_drawer_root"
+        );
+    });
+}
