@@ -113,8 +113,6 @@ pub fn handle_touch_move_or_down(
         }
     }
 
-    #[cfg(feature = "devkit")]
-    let mut target_name = "None".to_string();
 
     // Hover management:
     // Touchscreens do not support cursor hover. Suppress expensive recursive

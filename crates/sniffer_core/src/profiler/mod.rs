@@ -745,6 +745,17 @@ pub fn render_devkit_debug_overlays(
     );
 }
 
+/// Renders DevKit visualizer debug overlays (no-op when devkit feature is disabled).
+#[cfg(not(feature = "devkit"))]
+#[inline]
+pub fn render_devkit_debug_overlays(
+    _renderer: &mut dyn crate::render::Renderer,
+    _profiler: &FrameProfiler,
+    _root_element: &crate::types::Element,
+    _layout_tree: &crate::layout::LayoutNode,
+) {
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -810,15 +821,4 @@ mod tests {
         assert_eq!(event.bottleneck, JankBottleneck::RenderDraw);
         assert_eq!(event.bottleneck_ms, 18.0);
     }
-}
-
-/// Renders DevKit visualizer debug overlays (no-op when devkit feature is disabled).
-#[cfg(not(feature = "devkit"))]
-#[inline]
-pub fn render_devkit_debug_overlays(
-    _renderer: &mut dyn crate::render::Renderer,
-    _profiler: &FrameProfiler,
-    _root_element: &crate::types::Element,
-    _layout_tree: &crate::layout::LayoutNode,
-) {
 }
