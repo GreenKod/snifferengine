@@ -126,21 +126,33 @@ pub(crate) fn draw_ui_node(
         return 0;
     }
 
-    let has_transform = (base_style.transform.scale - 1.0).abs() >= 1e-4
-        || base_style.transform.rotate.abs() >= 1e-4
-        || tx.abs() >= 1e-4
-        || ty.abs() >= 1e-4;
+    let has_matrix_transform = (base_style.transform.scale - 1.0).abs() >= 1e-4
+        || base_style.transform.rotate.abs() >= 1e-4;
 
-    if has_transform {
+    let (rect, pass_tx, pass_ty) = if has_matrix_transform {
+        let center_x = rect.x + total_tx + rect.width / 2.0;
+        let center_y = rect.y + total_ty + rect.height / 2.0;
         renderer.push_transform(
-            rect.x + rect.width / 2.0,
-            rect.y + rect.height / 2.0,
+            center_x,
+            center_y,
             base_style.transform.scale,
             base_style.transform.rotate,
-            tx,
-            ty,
+            0.0,
+            0.0,
         );
-    }
+        (rect, 0.0, 0.0)
+    } else {
+        (
+            sniffer_core::Rect::new(
+                rect.x + total_tx,
+                rect.y + total_ty,
+                rect.width,
+                rect.height,
+            ),
+            total_tx,
+            total_ty,
+        )
+    };
 
     let alpha_changed = (final_alpha - alpha_multiplier).abs() >= 1e-4;
     if alpha_changed {
@@ -335,8 +347,8 @@ pub(crate) fn draw_ui_node(
         final_alpha,
         accumulated_scroll_x,
         accumulated_scroll_y,
-        total_tx,
-        total_ty,
+        pass_tx,
+        pass_ty,
         &base_style,
         rect,
         widget_id,
@@ -350,7 +362,7 @@ pub(crate) fn draw_ui_node(
     if alpha_changed {
         renderer.set_global_alpha(alpha_multiplier);
     }
-    if has_transform {
+    if has_matrix_transform {
         renderer.pop_transform();
     }
 
