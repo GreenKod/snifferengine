@@ -274,11 +274,12 @@ impl JankWatchdog {
         self.total_active_frames = self.total_active_frames.wrapping_add(1);
         let budget_ms = self.target_budget_ms();
         let deadline = budget_ms + self.tolerance_ms;
-        let work_ms = phases.work_latency_ms();
-        let work_overrun = work_ms > deadline;
+        let thread_work_ms = phases.busiest_thread_work_ms();
+        let thread_overrun =
+            phases.layout_and_physics_ms > deadline || phases.render_draw_ms > deadline;
         let swap_stall = phases.swap_vsync_ms > budget_ms * 1.8;
 
-        if missed_vsyncs == 0 && !work_overrun && !swap_stall {
+        if missed_vsyncs == 0 && !thread_overrun && !swap_stall {
             return None;
         }
 
@@ -290,7 +291,7 @@ impl JankWatchdog {
         } else if swap_stall {
             phases.swap_vsync_ms - budget_ms
         } else {
-            work_ms - budget_ms
+            thread_work_ms - budget_ms
         };
 
         let event = JankEvent {
@@ -349,7 +350,7 @@ impl JankWatchdog {
             (JankBottleneck::RenderDraw, draw)
         } else if layout > budget_ms {
             (JankBottleneck::LayoutAndPhysics, layout)
-        } else if queue > budget_ms * 0.5 && queue >= draw && queue >= layout {
+        } else if queue > budget_ms * 1.2 && queue >= draw && queue >= layout {
             (JankBottleneck::QueueLatency, queue)
         } else if swap > budget_ms * 1.8 {
             (JankBottleneck::VsyncOrDriver, swap)
@@ -958,11 +959,11 @@ mod tests {
     fn test_jank_watchdog_detects_layout_bottleneck() {
         let mut watchdog = JankWatchdog::new(90.0, 2.0);
         let phases = FramePhaseMetrics {
-            layout_and_physics_ms: 12.0,
+            layout_and_physics_ms: 14.0,
             queue_latency_ms: 0.5,
             render_draw_ms: 2.0,
             swap_vsync_ms: 3.5,
-            total_frame_ms: 18.0,
+            total_frame_ms: 20.0,
         };
 
         let jank = watchdog.evaluate_frame(2, phases);
@@ -970,7 +971,7 @@ mod tests {
         let event = jank.unwrap();
         assert_eq!(event.frame_number, 2);
         assert_eq!(event.bottleneck, JankBottleneck::LayoutAndPhysics);
-        assert_eq!(event.bottleneck_ms, 12.0);
+        assert_eq!(event.bottleneck_ms, 14.0);
         assert!(event.overrun_ms > 0.0);
         assert_eq!(watchdog.jank_count(), 1);
         assert_eq!(watchdog.jank_percentage(), 100.0);
@@ -983,15 +984,33 @@ mod tests {
         let phases = FramePhaseMetrics {
             layout_and_physics_ms: 1.0,
             queue_latency_ms: 0.5,
-            render_draw_ms: 18.0,
+            render_draw_ms: 19.5,
             swap_vsync_ms: 4.0,
-            total_frame_ms: 23.5,
+            total_frame_ms: 25.0,
         };
 
         let jank = watchdog.evaluate_frame(3, phases);
         assert!(jank.is_some());
         let event = jank.unwrap();
         assert_eq!(event.bottleneck, JankBottleneck::RenderDraw);
-        assert_eq!(event.bottleneck_ms, 18.0);
+        assert_eq!(event.bottleneck_ms, 19.5);
+    }
+
+    #[test]
+    fn test_jank_watchdog_pipelined_queue_wait_not_jank() {
+        let mut watchdog = JankWatchdog::new(60.0, 2.0);
+        let phases = FramePhaseMetrics {
+            layout_and_physics_ms: 0.5,
+            queue_latency_ms: 16.0,
+            render_draw_ms: 6.0,
+            swap_vsync_ms: 9.0,
+            total_frame_ms: 31.5,
+        };
+
+        let jank = watchdog.classify(10, phases, 0, Some(16.4));
+        assert!(
+            jank.is_none(),
+            "Normal pipelined queue wait with 0 missed VSyncs must not be flagged as jank"
+        );
     }
 }
