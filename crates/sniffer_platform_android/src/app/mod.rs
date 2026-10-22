@@ -80,11 +80,13 @@ pub fn android_main(app: AndroidApp) {
         },
     ));
 
-    let mut root_element = initial_root.clone();
+    let initial_root_arc = Arc::new(initial_root);
+    let mut root_element = (*initial_root_arc).clone();
+    state.cached_root_element = Arc::clone(&initial_root_arc);
 
     let init_time = std::time::Instant::now();
     let shared_render_state = Arc::new(RwLock::new(Arc::new(SharedRenderState {
-        root_element: initial_root,
+        root_element: initial_root_arc,
         layout_tree: initial_layout,
         metrics: ScreenMetrics::from_scale(initial_width, initial_height, density, scaled_density),
         style_map: state.style_map.clone(),
@@ -94,6 +96,8 @@ pub fn android_main(app: AndroidApp) {
         version: 0,
         frame_start: init_time,
         layout_end: init_time,
+        scroll_offsets: std::collections::HashMap::new(),
+        page_indicator_float: None,
     })));
 
     let (render_tx, render_rx) = crossbeam_channel::unbounded::<RenderMessage>();

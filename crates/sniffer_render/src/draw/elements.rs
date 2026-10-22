@@ -42,26 +42,55 @@ pub(crate) fn draw_element_contents(
     rect: Rect,
     widget_id: Option<u64>,
     is_animating: bool,
+    scroll_offsets: Option<&std::collections::HashMap<u64, (f32, f32)>>,
+    page_indicator_float: Option<f32>,
 ) -> usize {
     let mut rendered_children = 0;
     match element {
         Element::Container { children, .. } | Element::SharedView { children, .. } => {
-            for (child_el, child_lay) in children.iter().zip(layout.children.iter()) {
-                rendered_children += draw_ui_node(
-                    renderer,
-                    child_el,
-                    child_lay,
-                    metrics,
-                    style_map,
-                    data_map,
-                    transition_manager,
-                    final_alpha,
-                    accumulated_scroll_x,
-                    accumulated_scroll_y,
-                    accumulated_tx,
-                    accumulated_ty,
-                    is_animating,
-                );
+            let is_indicator_container = element.id() == Some("page_indicator_container");
+            let indicator_dots =
+                if is_indicator_container && let Some(page_float) = page_indicator_float {
+                    let is_landscape =
+                        base_style.flex_direction == sniffer_core::style::FlexDirection::Column;
+                    let vmin_px = metrics.physical_width.min(metrics.physical_height) / 100.0;
+                    Some(sniffer_core::physics::indicator::compute_indicator_dots(
+                        children.len(),
+                        page_float,
+                        vmin_px,
+                        is_landscape,
+                        rect,
+                    ))
+                } else {
+                    None
+                };
+
+            if let Some(dots) = indicator_dots {
+                for (dot_rect, dot_bg) in dots {
+                    let radius = (dot_rect.width.min(dot_rect.height)) * 0.5;
+                    renderer.draw_rect(dot_rect, dot_bg, radius, 0.0, None);
+                    rendered_children += 1;
+                }
+            } else {
+                for (child_el, child_lay) in children.iter().zip(layout.children.iter()) {
+                    rendered_children += draw_ui_node(
+                        renderer,
+                        child_el,
+                        child_lay,
+                        metrics,
+                        style_map,
+                        data_map,
+                        transition_manager,
+                        final_alpha,
+                        accumulated_scroll_x,
+                        accumulated_scroll_y,
+                        accumulated_tx,
+                        accumulated_ty,
+                        is_animating,
+                        scroll_offsets,
+                        page_indicator_float,
+                    );
+                }
             }
         }
         Element::ScrollView {
@@ -84,15 +113,19 @@ pub(crate) fn draw_element_contents(
                 }
             }
             let content_height = if min_y <= max_y { max_y - min_y } else { 0.0 };
-            let safe_scroll_y = if scroll_y.is_nan() || scroll_y.is_infinite() {
+
+            let (raw_sx, raw_sy) = widget_id
+                .and_then(|wid| scroll_offsets.and_then(|m| m.get(&wid).copied()))
+                .unwrap_or((*scroll_x, *scroll_y));
+            let safe_scroll_y = if raw_sy.is_nan() || raw_sy.is_infinite() {
                 0.0
             } else {
-                *scroll_y
+                raw_sy
             };
-            let safe_scroll_x = if scroll_x.is_nan() || scroll_x.is_infinite() {
+            let safe_scroll_x = if raw_sx.is_nan() || raw_sx.is_infinite() {
                 0.0
             } else {
-                *scroll_x
+                raw_sx
             };
 
             renderer.push_transform(0.0, 0.0, 1.0, 0.0, -safe_scroll_x, -safe_scroll_y);
@@ -111,6 +144,8 @@ pub(crate) fn draw_element_contents(
                     accumulated_tx,
                     accumulated_ty,
                     is_animating,
+                    scroll_offsets,
+                    page_indicator_float,
                 );
             }
             renderer.pop_transform();

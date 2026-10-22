@@ -29,6 +29,38 @@ pub fn draw_ui(
     accumulated_scroll_x: f32,
     accumulated_scroll_y: f32,
 ) -> usize {
+    draw_ui_with_physics(
+        renderer,
+        element,
+        layout,
+        metrics,
+        style_map,
+        data_map,
+        transition_manager,
+        alpha_multiplier,
+        accumulated_scroll_x,
+        accumulated_scroll_y,
+        None,
+        None,
+    )
+}
+
+/// Extended UI renderer supporting dynamic scroll offsets and indicator tracking without tree re-layout.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_ui_with_physics(
+    renderer: &mut dyn Renderer,
+    element: &Element,
+    layout: &LayoutNode,
+    metrics: &ScreenMetrics,
+    style_map: &StyleMap,
+    data_map: &DataMap,
+    transition_manager: &sniffer_core::anim::TransitionManager,
+    alpha_multiplier: f32,
+    accumulated_scroll_x: f32,
+    accumulated_scroll_y: f32,
+    scroll_offsets: Option<&std::collections::HashMap<u64, (f32, f32)>>,
+    page_indicator_float: Option<f32>,
+) -> usize {
     let is_animating = transition_manager.states.values().any(|s| s.is_active);
     let count = draw_ui_node(
         renderer,
@@ -44,6 +76,8 @@ pub fn draw_ui(
         0.0,
         0.0,
         is_animating,
+        scroll_offsets,
+        page_indicator_float,
     );
     renderer.flush();
     count
@@ -65,6 +99,8 @@ pub(crate) fn draw_ui_node(
     accumulated_tx: f32,
     accumulated_ty: f32,
     is_animating: bool,
+    scroll_offsets: Option<&std::collections::HashMap<u64, (f32, f32)>>,
+    page_indicator_float: Option<f32>,
 ) -> usize {
     use sniffer_core::ui::data_map::DataValue;
     use sniffer_core::ui::data_map::DrawCommand;
@@ -353,6 +389,8 @@ pub(crate) fn draw_ui_node(
         rect,
         widget_id,
         is_animating,
+        scroll_offsets,
+        page_indicator_float,
     );
 
     if base_style.overflow_hidden {

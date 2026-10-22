@@ -13,7 +13,7 @@ pub enum RenderMessage {
 
 #[derive(Clone)]
 pub struct SharedRenderState {
-    pub root_element: sniffer_core::types::Element,
+    pub root_element: Arc<sniffer_core::types::Element>,
     pub layout_tree: Arc<sniffer_core::layout::LayoutNode>,
     pub metrics: ScreenMetrics,
     pub style_map: sniffer_core::ui::style_map::StyleMap,
@@ -23,6 +23,8 @@ pub struct SharedRenderState {
     pub version: u64,
     pub frame_start: std::time::Instant,
     pub layout_end: std::time::Instant,
+    pub scroll_offsets: HashMap<u64, (f32, f32)>,
+    pub page_indicator_float: Option<f32>,
 }
 
 pub struct AndroidHostBridge;
