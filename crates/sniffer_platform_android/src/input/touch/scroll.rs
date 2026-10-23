@@ -41,9 +41,21 @@ pub fn handle_touch_move_or_down(
         )) = find_hovered_scrollview(root_element, layout_tree, point)
             && capture_drag.unwrap_or(true)
         {
-            state.active_scrollview_drag = id
+            let sv_id = id
                 .as_deref()
                 .map(|id_str| sniffer_core::ui::widget::fnv1a(id_str.as_bytes()));
+            state.active_scrollview_drag = sv_id;
+            if let Some(id_val) = sv_id {
+                if let Some(phys) = state.scroll_physics.get_mut(&id_val) {
+                    phys.vel_x = 0.0;
+                    phys.vel_y = 0.0;
+                    phys.spring_sim_x = None;
+                    phys.spring_sim_y = None;
+                    phys.snap_target_x = None;
+                    phys.is_dragging = true;
+                    phys.drag_start_x = phys.pos_x;
+                }
+            }
         }
         state.kinetic_scrolls.clear();
         state.drag_history.clear();
@@ -76,9 +88,13 @@ pub fn handle_touch_move_or_down(
         let total_dx = point.x - state.touch_start_pos.x;
         let total_dy = point.y - state.touch_start_pos.y;
 
-        // Lock to Vertical ONLY when movement is predominantly vertical (swiping up/down to change floor)
-        if total_dy.abs() > 16.0 * density && total_dy.abs() > total_dx.abs() * 1.35 {
-            state.gesture_axis = crate::app::state::GestureAxis::Vertical;
+        // Disambiguate gesture axis once threshold is crossed
+        if state.gesture_axis == crate::app::state::GestureAxis::Undetermined {
+            if total_dx.abs() > 14.0 * density && total_dx.abs() > total_dy.abs() * 1.2 {
+                state.gesture_axis = crate::app::state::GestureAxis::Horizontal;
+            } else if total_dy.abs() > 16.0 * density && total_dy.abs() > total_dx.abs() * 1.35 {
+                state.gesture_axis = crate::app::state::GestureAxis::Vertical;
+            }
         }
 
         if state.active_scrollview_drag.is_none() {

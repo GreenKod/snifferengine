@@ -180,9 +180,10 @@ pub fn android_main(app: AndroidApp) {
 
         let current_ui_version =
             sniffer_core::types::UI_VERSION.load(std::sync::atomic::Ordering::Relaxed);
-        let is_interacting = is_dragging || has_active_physics;
+        let has_user_events = !state.event_bus.is_empty();
+        let is_finger_dragging = is_dragging;
         let ui_changed = (state.layout_dirty || (current_ui_version != state.last_ui_version))
-            && !is_interacting;
+            && (!is_finger_dragging || has_user_events);
 
         let is_first_frame = matches!(
             &root_element,

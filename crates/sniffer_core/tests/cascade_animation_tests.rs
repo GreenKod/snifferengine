@@ -110,3 +110,94 @@ fn test_spring_easing_cascade_convergence() {
     assert!((current.transform.translate_y - 0.0).abs() < 1e-2);
     assert!((current.opacity - 1.0).abs() < 1e-2);
 }
+
+#[test]
+fn test_unmounted_elements_pruned_from_transition_manager() {
+    use sniffer_core::types::Element;
+
+    let mut manager = TransitionManager::default();
+
+    // 1. Mount drawer container with 20 cards
+    let mut children = Vec::new();
+    for i in 0..20 {
+        let style = Style {
+            opacity: 0.0,
+            transition: Transition {
+                duration: 0.35,
+                easing: Easing::Linear,
+                delay: 0.0,
+                stagger_index: i,
+                stagger_interval: 0.05, // 20 * 0.05 = 1.0s total stagger
+            },
+            ..Default::default()
+        };
+        children.push(Element::Container {
+            id: Some(format!("card_{i}")),
+            style,
+            children: Vec::new(),
+        });
+    }
+
+    let drawer_element = Element::Container {
+        id: Some("drawer_root".to_string()),
+        style: Style::default(),
+        children,
+    };
+
+    manager.sync_tree(&drawer_element);
+
+    // Apply target styles with opacity 1.0
+    let mut open_children = Vec::new();
+    for i in 0..20 {
+        let style = Style {
+            opacity: 1.0,
+            transition: Transition {
+                duration: 0.35,
+                easing: Easing::Linear,
+                delay: 0.0,
+                stagger_index: i,
+                stagger_interval: 0.05,
+            },
+            ..Default::default()
+        };
+        open_children.push(Element::Container {
+            id: Some(format!("card_{i}")),
+            style,
+            children: Vec::new(),
+        });
+    }
+    let open_drawer = Element::Container {
+        id: Some("drawer_root".to_string()),
+        style: Style::default(),
+        children: open_children,
+    };
+
+    manager.sync_tree(&open_drawer);
+    assert!(manager.is_animating(), "Drawer should be animating entry");
+    assert_eq!(manager.states.len(), 21); // drawer_root + 20 cards
+
+    // Tick 0.05s: card_0 is animating, later cards are still in stagger delay
+    manager.tick(0.05);
+    assert!(manager.is_animating());
+
+    // 2. User navigates back to Home -> Drawer is unmounted from UI tree!
+    let home_element = Element::Container {
+        id: Some("home_screen_root".to_string()),
+        style: Style::default(),
+        children: Vec::new(),
+    };
+
+    manager.sync_tree(&home_element);
+
+    // CRITICAL: All 20 drawer cards and drawer_root must be pruned IMMEDIATELY!
+    // is_animating must NOT stay true waiting for 1.0s stagger delay!
+    assert_eq!(manager.states.len(), 1); // only home_screen_root
+    assert!(manager.states.contains_key("home_screen_root"));
+    assert!(!manager.states.contains_key("drawer_root"));
+    assert!(!manager.states.contains_key("card_0"));
+    assert!(!manager.states.contains_key("card_19"));
+    assert!(
+        !manager.is_animating(),
+        "TransitionManager must be completely idle after unmount"
+    );
+}

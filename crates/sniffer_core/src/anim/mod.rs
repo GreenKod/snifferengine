@@ -404,8 +404,7 @@ impl TransitionManager {
     pub fn sync_tree(&mut self, element: &crate::types::Element) {
         let mut current_ids = HashSet::new();
         self.sync_tree_recursive(element, &mut current_ids);
-        self.states
-            .retain(|id, state| current_ids.contains(id) || state.is_active);
+        self.states.retain(|id, _| current_ids.contains(id));
         self.last_synced_ids = current_ids;
     }
 

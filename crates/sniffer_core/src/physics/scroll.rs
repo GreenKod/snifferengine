@@ -285,25 +285,38 @@ impl ScrollPhysics {
                 let frac = delta / page_width;
                 let screens_per_sec = vel_x.abs() / page_width;
 
-                // Deterministic single-page advance:
-                // Dragging commits at 35% displacement.
-                // Decisive flick (>= 0.75 screens/sec) commits with >= 6% displacement.
-                // A single swipe advances AT MOST 1 page, preventing double-page skips.
-                let target_page = if vel_x > 100.0 {
-                    if frac >= 0.06 || screens_per_sec >= 0.8 {
+                // Deterministic target page resolution:
+                // If displaced forward (frac > 0, to the right of start_page):
+                //   - Flick forward (vel_x > 100): advance to start_page + 1
+                //   - Flick backward (vel_x < -100): snap back to start_page
+                //   - Slow release (|vel_x| <= 100): if frac >= 0.35 advance to start_page + 1, else start_page
+                // If displaced backward (frac < 0, to the left of start_page):
+                //   - Flick backward (vel_x < -100): advance to start_page - 1
+                //   - Flick forward (vel_x > 100): snap back to start_page
+                //   - Slow release (|vel_x| <= 100): if frac <= -0.35 advance to start_page - 1, else start_page
+                let target_page = if frac > 0.001 {
+                    if vel_x > 100.0 {
+                        (start_page + 1.0).min(last_page)
+                    } else if vel_x < -100.0 {
+                        start_page
+                    } else if frac >= 0.35 {
                         (start_page + 1.0).min(last_page)
                     } else {
                         start_page
                     }
-                } else if vel_x < -100.0 {
-                    if frac <= -0.06 || screens_per_sec >= 0.8 {
+                } else if frac < -0.001 {
+                    if vel_x < -100.0 {
+                        (start_page - 1.0).max(0.0)
+                    } else if vel_x > 100.0 {
+                        start_page
+                    } else if frac <= -0.35 {
                         (start_page - 1.0).max(0.0)
                     } else {
                         start_page
                     }
-                } else if frac >= 0.35 {
+                } else if vel_x > 100.0 && screens_per_sec >= 0.5 {
                     (start_page + 1.0).min(last_page)
-                } else if frac <= -0.35 {
+                } else if vel_x < -100.0 && screens_per_sec >= 0.5 {
                     (start_page - 1.0).max(0.0)
                 } else {
                     start_page

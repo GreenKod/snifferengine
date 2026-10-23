@@ -1058,3 +1058,129 @@ fn test_app_drawer_staggered_spring_cascade_stage_2_2() {
         assert_eq!(card_0_open.style().transition.stagger_index, 0);
     });
 }
+
+#[test]
+fn test_app_drawer_rapid_open_close_timer_cancellation() {
+    let plugins_dir = get_plugins_dir();
+    let default_ui_dir = plugins_dir.join("default_ui");
+    let framework_path = plugins_dir.join("framework/sniffer_ui.js");
+
+    let rt = rquickjs::Runtime::new().unwrap();
+    let ctx = rquickjs::Context::full(&rt).unwrap();
+
+    ctx.with(|c| {
+        let setup = r"
+            globalThis.host_log = function() {};
+            globalThis.host_set_ui = function() {};
+            globalThis.host_screen_width = function() { return 1080; };
+            globalThis.host_screen_height = function() { return 2400; };
+            globalThis.requestPermissions = function(p) { return p; };
+            globalThis.registeredApis = {};
+            globalThis.registerApi = function(name, fn) { globalThis.registeredApis[name] = fn; };
+            globalThis.callApi = function(name, payload) {
+                return globalThis.registeredApis[name] ? globalThis.registeredApis[name](payload) : null;
+            };
+            globalThis.broadcastEvent = function() {};
+            globalThis.subscribeChannel = function() {};
+            globalThis.host_hash = function(s) {
+                let h = 0x811c9dc5;
+                for (let i = 0; i < s.length; i++) {
+                    h ^= s.charCodeAt(i);
+                    h = Math.imul(h, 0x01000193);
+                }
+                return (h >>> 0);
+            };
+            globalThis.SnifferUI = { forceUpdate: function() {} };
+            globalThis.Vault = { queryApps: function() { return { apps: [] }; } };
+            globalThis.getApplicationList = function() { return []; };
+            globalThis.host_is_devkit_enabled = function() { return false; };
+            globalThis.setTimeout = function(fn) { return 1; };
+            globalThis.clearTimeout = function() {};
+        ";
+        c.eval::<(), _>(setup).unwrap();
+
+        let fw_code = fs::read_to_string(&framework_path).unwrap();
+        c.eval::<(), _>(fw_code).unwrap();
+
+        let state_code = fs::read_to_string(default_ui_dir.join("state.js")).unwrap();
+        c.eval::<(), _>(state_code).unwrap();
+
+        let layout_code = fs::read_to_string(default_ui_dir.join("components/layout.js")).unwrap();
+        c.eval::<(), _>(layout_code).unwrap();
+
+        let app_grid_code = fs::read_to_string(default_ui_dir.join("components/app_grid.js")).unwrap();
+        c.eval::<(), _>(app_grid_code).unwrap();
+
+        let app_drawer_code = fs::read_to_string(default_ui_dir.join("components/app_drawer.js")).unwrap();
+        c.eval::<(), _>(app_drawer_code).unwrap();
+
+        let main_code = fs::read_to_string(default_ui_dir.join("main.js")).unwrap();
+        c.eval::<(), _>(main_code.as_str()).unwrap();
+
+        fn find_element<'a>(
+            el: &'a sniffer_core::types::Element,
+            target_id: &str,
+        ) -> Option<&'a sniffer_core::types::Element> {
+            if el.id() == Some(target_id) {
+                return Some(el);
+            }
+            match el {
+                sniffer_core::types::Element::Container { children, .. }
+                | sniffer_core::types::Element::ScrollView { children, .. }
+                | sniffer_core::types::Element::SharedView { children, .. } => {
+                    for child in children {
+                        if let Some(found) = find_element(child, target_id) {
+                            return Some(found);
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            }
+        }
+
+        // 1. Initial home screen: drawer is unmounted
+        let is_mounted: bool = c.eval("state.isDrawerMounted").unwrap();
+        assert!(!is_mounted, "Drawer must start unmounted on home floor");
+
+        // 2. Open drawer
+        c.eval::<(), _>("state.goToBottomFloor()").unwrap();
+        let is_mounted: bool = c.eval("state.isDrawerMounted").unwrap();
+        let floor: String = c.eval("state.currentFloor").unwrap();
+        assert!(is_mounted, "Drawer must be mounted after goToBottomFloor");
+        assert_eq!(floor, "bottom");
+
+        // 3. Initiate close: floor changes to top, close timer starts, but drawer remains mounted for exit animation
+        c.eval::<(), _>("state.goToTopFloor()").unwrap();
+        let is_mounted: bool = c.eval("state.isDrawerMounted").unwrap();
+        let floor: String = c.eval("state.currentFloor").unwrap();
+        let has_timer: bool = c.eval("state._drawerCloseTimer !== null").unwrap();
+        assert!(is_mounted, "Drawer must stay mounted during closing animation");
+        assert_eq!(floor, "top");
+        assert!(has_timer, "Close timer must be active");
+
+        // 4. RAPID REOPEN before close timer fires: must clear timer and keep drawer mounted!
+        c.eval::<(), _>("state.goToBottomFloor()").unwrap();
+        let is_mounted: bool = c.eval("state.isDrawerMounted").unwrap();
+        let floor: String = c.eval("state.currentFloor").unwrap();
+        let timer_cleared: bool = c.eval("state._drawerCloseTimer === null").unwrap();
+        assert!(is_mounted, "Drawer must remain mounted on rapid reopen");
+        assert_eq!(floor, "bottom");
+        assert!(timer_cleared, "Close timer must be cancelled on reopen");
+
+        // 5. Close and let timer fire: unmounts drawer cleanly
+        c.eval::<(), _>("state.goToTopFloor()").unwrap();
+        // Invoke timer callback
+        c.eval::<(), _>(r#"
+            if (state.currentFloor === "top") {
+                state.isDrawerMounted = false;
+            }
+        "#).unwrap();
+        let is_mounted_final: bool = c.eval("state.isDrawerMounted").unwrap();
+        assert!(!is_mounted_final, "Drawer must be unmounted after timer fires");
+
+        let root_ui_str: String = c.eval("JSON.stringify(Root())").unwrap();
+        let root_ui: sniffer_core::types::Element = serde_json::from_str(&root_ui_str).unwrap();
+        assert!(find_element(&root_ui, "app_drawer_root").is_none());
+    });
+}

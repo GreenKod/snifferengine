@@ -154,10 +154,19 @@ pub fn handle_touch_release(
                 let is_drag = downward_dist >= (swipe_thresh * 1.1);
                 if is_flick || is_drag {
                     state.event_bus.push(UiEvent::SwipeDown);
-                    for phys in state.scroll_physics.values_mut() {
-                        if phys.snap_x.is_none() && phys.pos_y < 0.0 {
-                            phys.pos_y = 0.0;
-                            phys.vel_y = 0.0;
+                    let drawer_id = sniffer_core::ui::widget::fnv1a("app_drawer_scroll".as_bytes());
+                    if let Some(phys) = state.scroll_physics.get_mut(&drawer_id) {
+                        phys.pos_y = 0.0;
+                        phys.vel_y = 0.0;
+                        phys.spring_sim_y = None;
+                    }
+                    if let Some(sv_id) = state.active_scrollview_drag {
+                        if let Some(phys) = state.scroll_physics.get_mut(&sv_id) {
+                            if phys.snap_x.is_none() {
+                                phys.pos_y = 0.0;
+                                phys.vel_y = 0.0;
+                                phys.spring_sim_y = None;
+                            }
                         }
                     }
                 }
@@ -171,12 +180,26 @@ pub fn handle_touch_release(
 }
 
 pub fn handle_touch_cancel(state: &mut crate::app::AppState) -> InputStatus {
-    state.active_scrollview_drag = None;
+    if let Some(sv_id) = state.active_scrollview_drag.take() {
+        if let Some(phys) = state.scroll_physics.get_mut(&sv_id) {
+            if phys.snap_x.is_some() {
+                phys.release_drag(0.0);
+            } else {
+                phys.release_drag_y(0.0);
+            }
+        }
+    }
+    for phys in state.scroll_physics.values_mut() {
+        if phys.is_dragging {
+            phys.is_dragging = false;
+            phys.vel_x = 0.0;
+            phys.vel_y = 0.0;
+        }
+    }
     state.active_scrollview_start_y = 0.0;
     state.gesture_axis = crate::app::state::GestureAxis::Undetermined;
     state.drag_history.clear();
-    let prev_hovered = state.hovered_btn;
-    state.hovered_btn = None;
+    let prev_hovered = state.hovered_btn.take();
     if let Some(prev) = prev_hovered {
         state.event_bus.push(UiEvent::HoverEnd(prev));
     }
