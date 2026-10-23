@@ -70,9 +70,9 @@ let state = {
         if (!this._cachedAlphabeticalApps) {
             const list = this.allApps.slice();
             list.sort(function(a, b) {
-                const nameA = (a.name || "").toLowerCase();
-                const nameB = (b.name || "").toLowerCase();
-                return nameA < nameB ? -1 : (nameA > nameB ? 1 : 0);
+                const nameA = a.name || "";
+                const nameB = b.name || "";
+                return nameA.localeCompare(nameB, "tr", { sensitivity: "base" });
             });
             this._cachedAlphabeticalApps = list;
         }

@@ -275,9 +275,11 @@ impl ScrollPhysics {
                 let page_float = self.pos_x / page_width;
 
                 let target_page = if vel_x > 80.0 {
-                    (page_float.floor() + 1.0).min(last_page)
+                    let extra_pages = ((vel_x - 80.0) / 2200.0).floor();
+                    (page_float.floor() + 1.0 + extra_pages).min(last_page)
                 } else if vel_x < -80.0 {
-                    (page_float.ceil() - 1.0).max(0.0)
+                    let extra_pages = ((-vel_x - 80.0) / 2200.0).floor();
+                    (page_float.ceil() - 1.0 - extra_pages).max(0.0)
                 } else {
                     page_float.round().clamp(0.0, last_page)
                 };
@@ -286,7 +288,7 @@ impl ScrollPhysics {
                 self.snap_target_x = Some(target_x);
                 self.spring_start_x = self.pos_x;
 
-                let mut init_vel = self.vel_x.clamp(-1200.0, 1200.0);
+                let mut init_vel = self.vel_x.clamp(-4500.0, 4500.0);
                 if (target_x >= max_x && init_vel > 0.0) || (target_x <= 0.0 && init_vel < 0.0) {
                     init_vel = 0.0;
                 }
