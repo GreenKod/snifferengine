@@ -162,7 +162,7 @@ impl ScrollPhysics {
                 self.spring_sim_y = None;
             }
         } else if !self.is_dragging && self.vel_y.abs() > 0.5 {
-            let (step_y, next_vy) = super::velocity::step_momentum_decay(self.vel_y, 7.62, dt);
+            let (step_y, next_vy) = super::velocity::step_momentum_decay(self.vel_y, 9.6, dt);
             self.pos_y += step_y;
             self.vel_y = next_vy;
             active = true;
@@ -243,20 +243,21 @@ impl ScrollPhysics {
     pub fn release_drag_y(&mut self, vel_y: f32) {
         self.is_dragging = false;
         let max_limit_y = self.max_y.unwrap_or(0.0);
+        let clamped_vel = vel_y.clamp(-3600.0, 3600.0);
         if self.pos_y < 0.0 {
             self.vel_y = 0.0;
             self.spring_sim_y = Some(
                 SpringSimulation::new(SpringConfig::rubber_band(), self.pos_y, 0.0)
-                    .with_initial_velocity(vel_y),
+                    .with_initial_velocity(clamped_vel),
             );
         } else if self.pos_y > max_limit_y {
             self.vel_y = 0.0;
             self.spring_sim_y = Some(
                 SpringSimulation::new(SpringConfig::rubber_band(), self.pos_y, max_limit_y)
-                    .with_initial_velocity(vel_y),
+                    .with_initial_velocity(clamped_vel),
             );
         } else {
-            self.vel_y = vel_y;
+            self.vel_y = clamped_vel;
         }
     }
 
@@ -274,11 +275,18 @@ impl ScrollPhysics {
                 let last_page = (self.page_count.unwrap_or(1) as f32) - 1.0;
                 let page_float = self.pos_x / page_width;
 
-                let target_page = if vel_x > 80.0 {
-                    let extra_pages = ((vel_x - 80.0) / 2200.0).floor();
+                let abs_vel = vel_x.abs();
+                // Normal swipes (up to 4200 px/s) advance exactly 1 page.
+                // Intentional fast flicks (> 4200 px/s) can leap multiple pages.
+                let extra_pages = if abs_vel > 4200.0 {
+                    ((abs_vel - 4200.0) / 2800.0).floor() + 1.0
+                } else {
+                    0.0
+                };
+
+                let target_page = if vel_x > 120.0 {
                     (page_float.floor() + 1.0 + extra_pages).min(last_page)
-                } else if vel_x < -80.0 {
-                    let extra_pages = ((-vel_x - 80.0) / 2200.0).floor();
+                } else if vel_x < -120.0 {
                     (page_float.ceil() - 1.0 - extra_pages).max(0.0)
                 } else {
                     page_float.round().clamp(0.0, last_page)
