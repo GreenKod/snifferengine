@@ -67,6 +67,12 @@ impl PackageRegistry {
         self.widgets.len()
     }
 
+    /// Returns `true` if at least one widget package is registered.
+    #[must_use]
+    pub fn has_widgets(&self) -> bool {
+        !self.widgets.is_empty()
+    }
+
     /// Returns a shared reference to the registry's [`DataVault`].
     pub fn vault(&self) -> &Arc<DataVault> {
         &self.vault

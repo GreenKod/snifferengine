@@ -292,10 +292,14 @@ pub fn spawn_render_thread(
                         current_state.page_indicator_float,
                     );
 
-                    let mut layout_rects = std::collections::HashMap::new();
-                    collect_layout_rects(&current_state.layout_tree, &mut layout_rects);
-                    if let Ok(mut reg) = pkg_registry.write() {
-                        reg.render_widgets(renderer, &layout_rects, None);
+                    let has_widgets = pkg_registry.read().is_ok_and(|reg| reg.has_widgets());
+
+                    if has_widgets {
+                        let mut layout_rects = std::collections::HashMap::new();
+                        collect_layout_rects(&current_state.layout_tree, &mut layout_rects);
+                        if let Ok(mut reg) = pkg_registry.write() {
+                            reg.render_widgets(renderer, &layout_rects, None);
+                        }
                     }
 
                     #[cfg(feature = "devkit")]

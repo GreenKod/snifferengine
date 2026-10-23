@@ -11,9 +11,11 @@ pub use culling::{
 use sniffer_core::ScreenMetrics;
 use sniffer_core::layout::LayoutNode;
 use sniffer_core::render::Renderer;
+use sniffer_core::style::Style;
 use sniffer_core::types::Element;
 use sniffer_core::ui::data_map::DataMap;
 use sniffer_core::ui::style_map::StyleMap;
+use std::borrow::Cow;
 
 /// Platform-agnostic traversal to draw the UI elements using the Renderer interface.
 #[allow(clippy::too_many_arguments)]
@@ -110,18 +112,19 @@ pub(crate) fn draw_ui_node(
         .id()
         .map(|id_str| sniffer_core::ui::widget::fnv1a(id_str.as_bytes()));
 
-    let mut base_style = element.style().clone();
-    if let Some(id_str) = element.id()
-        && let Some(anim_style) = transition_manager.get_current_style(id_str)
-    {
-        base_style = anim_style.clone();
-    }
+    let raw_style = element.style();
+    let anim_style = element
+        .id()
+        .and_then(|id_str| transition_manager.get_current_style(id_str));
+    let base_style_ref = anim_style.unwrap_or(raw_style);
 
-    if let Some(id) = widget_id
+    let base_style: Cow<'_, Style> = if let Some(id) = widget_id
         && let Some(override_style) = style_map.get(id)
     {
-        base_style = override_style.apply(base_style);
-    }
+        Cow::Owned(override_style.apply(base_style_ref.clone()))
+    } else {
+        Cow::Borrowed(base_style_ref)
+    };
 
     let final_alpha = alpha_multiplier * base_style.opacity.clamp(0.0, 1.0);
     if final_alpha < 0.005 {

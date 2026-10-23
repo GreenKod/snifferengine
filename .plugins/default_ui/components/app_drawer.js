@@ -45,11 +45,14 @@ function AppDrawerCardComponent(app, index, isLandscape, isBottomFloor) {
             translate_y: cardTranslateY,
             scale: 1.0,
         },
-        transition: {
+        transition: index < 20 ? {
             duration: 0.35,
             easing: { spring: { stiffness: 280, damping: 24 } },
-            stagger_index: index < 24 ? index : 24,
+            stagger_index: index,
             stagger_interval: 0.015,
+        } : {
+            duration: 0.25,
+            easing: "ease_out",
         },
     }, [
         Container("drawer_icon_" + index, {
@@ -85,8 +88,10 @@ function AppDrawerComponent() {
     const apps = state.filteredDrawerApps;
     const query = state.drawerSearchQuery || "";
 
+    const isMounted = isBottomFloor || state.isDrawerMounted;
+    const maxCards = isMounted ? apps.length : Math.min(apps.length, 20);
     const cardItems = [];
-    for (let i = 0; i < apps.length; i++) {
+    for (let i = 0; i < maxCards; i++) {
         cardItems.push(AppDrawerCardComponent(apps[i], i, isLandscape, isBottomFloor));
     }
 

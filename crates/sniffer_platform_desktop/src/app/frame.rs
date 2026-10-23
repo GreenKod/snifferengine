@@ -181,10 +181,14 @@ pub fn render_desktop_frame(
         0.0,
     );
 
-    let mut layout_rects = HashMap::new();
-    collect_layout_rects(&layout_tree, &mut layout_rects);
-    if let Ok(mut reg) = app.pkg_registry.write() {
-        reg.render_widgets(renderer, &layout_rects, None);
+    let has_widgets = app.pkg_registry.read().is_ok_and(|reg| reg.has_widgets());
+
+    if has_widgets {
+        let mut layout_rects = HashMap::new();
+        collect_layout_rects(&layout_tree, &mut layout_rects);
+        if let Ok(mut reg) = app.pkg_registry.write() {
+            reg.render_widgets(renderer, &layout_rects, None);
+        }
     }
 
     #[cfg(feature = "devkit")]
