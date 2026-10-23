@@ -145,7 +145,7 @@ pub fn update_and_render_state(
             let (step_x, next_vx) =
                 sniffer_core::physics::step_momentum_decay(k.velocity_x, 7.62, dt);
             let (step_y, next_vy) =
-                sniffer_core::physics::step_momentum_decay(k.velocity_y, 9.6, dt);
+                sniffer_core::physics::step_momentum_decay(k.velocity_y, 3.6, dt);
             state.event_bus.push(UiEvent::Scroll(
                 Some(k.sv_id),
                 step_x,

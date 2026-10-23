@@ -162,7 +162,7 @@ impl ScrollPhysics {
                 self.spring_sim_y = None;
             }
         } else if !self.is_dragging && self.vel_y.abs() > 0.5 {
-            let (step_y, next_vy) = super::velocity::step_momentum_decay(self.vel_y, 9.6, dt);
+            let (step_y, next_vy) = super::velocity::step_momentum_decay(self.vel_y, 3.6, dt);
             self.pos_y += step_y;
             self.vel_y = next_vy;
             active = true;
@@ -243,7 +243,7 @@ impl ScrollPhysics {
     pub fn release_drag_y(&mut self, vel_y: f32) {
         self.is_dragging = false;
         let max_limit_y = self.max_y.unwrap_or(0.0);
-        let clamped_vel = vel_y.clamp(-3600.0, 3600.0);
+        let clamped_vel = vel_y.clamp(-10000.0, 10000.0);
         if self.pos_y < 0.0 {
             self.vel_y = 0.0;
             self.spring_sim_y = Some(
@@ -274,20 +274,44 @@ impl ScrollPhysics {
             if page_width > 0.0 {
                 let last_page = (self.page_count.unwrap_or(1) as f32) - 1.0;
                 let page_float = self.pos_x / page_width;
+                let screens_per_sec = vel_x.abs() / page_width;
+                let progress = page_float - page_float.floor();
 
-                let abs_vel = vel_x.abs();
-                // Normal swipes (up to 4200 px/s) advance exactly 1 page.
-                // Intentional fast flicks (> 4200 px/s) can leap multiple pages.
-                let extra_pages = if abs_vel > 4200.0 {
-                    ((abs_vel - 4200.0) / 2800.0).floor() + 1.0
-                } else {
-                    0.0
-                };
-
-                let target_page = if vel_x > 120.0 {
-                    (page_float.floor() + 1.0 + extra_pages).min(last_page)
-                } else if vel_x < -120.0 {
-                    (page_float.ceil() - 1.0 - extra_pages).max(0.0)
+                // Target page resolution normalized to screen width:
+                // - Dragging past 50% midpoint commits to the page.
+                // - A decisive flick (screens_per_sec >= 1.0) with at least 15% displacement commits to 1 page.
+                // - Normal fast flicks (up to 4.5 screens/sec) advance EXACTLY 1 page.
+                // - Only extreme power sweeps (> 4.5 screens/sec) leap 2+ pages.
+                let target_page = if vel_x > 0.0 {
+                    // Swiping right-to-left (towards next page)
+                    let committed = progress >= 0.50
+                        || (progress >= 0.15 && screens_per_sec >= 1.0)
+                        || (progress >= 0.40 && screens_per_sec >= 0.35);
+                    if committed {
+                        let extra_pages = if screens_per_sec > 4.5 {
+                            ((screens_per_sec - 4.5) / 2.5).floor() + 1.0
+                        } else {
+                            0.0
+                        };
+                        (page_float.floor() + 1.0 + extra_pages).min(last_page)
+                    } else {
+                        page_float.floor().clamp(0.0, last_page)
+                    }
+                } else if vel_x < 0.0 {
+                    // Swiping left-to-right (towards previous page)
+                    let committed = progress <= 0.50
+                        || (progress <= 0.85 && screens_per_sec >= 1.0)
+                        || (progress <= 0.60 && screens_per_sec >= 0.35);
+                    if committed {
+                        let extra_pages = if screens_per_sec > 4.5 {
+                            ((screens_per_sec - 4.5) / 2.5).floor() + 1.0
+                        } else {
+                            0.0
+                        };
+                        (page_float.ceil() - 1.0 - extra_pages).max(0.0)
+                    } else {
+                        page_float.ceil().clamp(0.0, last_page)
+                    }
                 } else {
                     page_float.round().clamp(0.0, last_page)
                 };
@@ -296,16 +320,40 @@ impl ScrollPhysics {
                 self.snap_target_x = Some(target_x);
                 self.spring_start_x = self.pos_x;
 
-                let mut init_vel = self.vel_x.clamp(-4500.0, 4500.0);
-                if (target_x >= max_x && init_vel > 0.0) || (target_x <= 0.0 && init_vel < 0.0) {
+                // Dynamic spring response based directly on release velocity:
+                // - Slow drag / release: k = 180, c = 26.8 -> smooth, gentle 400ms glide.
+                // - Normal swipe:        k = 420, c = 41.0 -> standard 240ms snappy snap.
+                // - Fast flick:          k = 720, c = 53.7 -> brisk 170ms rapid lock-in.
+                // - Extreme sweep:       k = 900, c = 60.0 -> ultra-fast 140ms response.
+                let k = (180.0 + screens_per_sec * 180.0).clamp(180.0, 900.0);
+                let c = 2.0 * k.sqrt();
+                let dynamic_spring = SpringConfig {
+                    mass: 1.0,
+                    stiffness: k,
+                    damping: c,
+                    position_tolerance: 0.05,
+                    velocity_tolerance: 0.1,
+                };
+
+                // Clamp initial velocity into the spring simulation:
+                let max_screen_vel = 8.0 * page_width;
+                let mut init_vel = self.vel_x.clamp(-max_screen_vel, max_screen_vel);
+                let dist_to_target = target_x - self.pos_x;
+                if (dist_to_target > 0.0 && init_vel < 0.0)
+                    || (dist_to_target < 0.0 && init_vel > 0.0)
+                {
                     init_vel = 0.0;
+                } else {
+                    let omega_0 = k.sqrt();
+                    let max_forward_vel = 1.6 * omega_0 * dist_to_target.abs();
+                    init_vel = init_vel.clamp(-max_forward_vel, max_forward_vel);
                 }
+
                 self.spring_start_vel_x = init_vel;
                 self.spring_time = 0.0;
 
-                // Analytical spring simulation for page snap
                 self.spring_sim_x = Some(
-                    SpringSimulation::new(SpringConfig::snappy(), self.pos_x, target_x)
+                    SpringSimulation::new(dynamic_spring, self.pos_x, target_x)
                         .with_initial_velocity(init_vel),
                 );
             }
