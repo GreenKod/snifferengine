@@ -75,21 +75,27 @@ pub fn update_and_render_state(
 
     let is_first_frame =
         matches!(root_element, Element::Container { children, .. } if children.is_empty());
+    let mut t_build_ui = 0.0_f32;
     if ui_changed || is_first_frame {
+        let b0 = std::time::Instant::now();
         if let Some(new_root) = state.plugin_registry.build_ui() {
             *root_element = new_root;
             state.cached_root_element = Arc::new(root_element.clone());
             state.layout_dirty = true;
         }
+        t_build_ui = b0.elapsed().as_secs_f32() * 1000.0;
     }
 
+    let mut t_sync = 0.0_f32;
     if ui_changed || screen_changed || is_first_frame {
+        let s0 = std::time::Instant::now();
         state
             .virtual_page_manager
             .on_viewport_resized(width, height, root_element);
         state.virtual_page_manager.virtualize_tree(root_element);
         physics_sync::sync_scroll_physics_from_tree(root_element, &mut state.scroll_physics);
         state.transition_manager.sync_tree(root_element);
+        t_sync = s0.elapsed().as_secs_f32() * 1000.0;
     }
     let is_animating = state.transition_manager.tick(dt) || state.transition_manager.is_animating();
 
@@ -109,12 +115,14 @@ pub fn update_and_render_state(
         }
     }
 
+    let mut t_taffy = 0.0_f32;
     let layout_recalculated = state.layout_dirty || state.cached_layout.is_none();
     let layout_tree = if !state.layout_dirty
         && let Some(ref cached) = state.cached_layout
     {
         cached.clone()
     } else {
+        let l0 = std::time::Instant::now();
         state.last_ui_version = current_ui_version;
         let fresh = Arc::new(calculate_layout(
             root_element,
@@ -130,8 +138,20 @@ pub fn update_and_render_state(
         );
         state.cached_layout = Some(fresh.clone());
         state.layout_dirty = false;
+        t_taffy = l0.elapsed().as_secs_f32() * 1000.0;
         fresh
     };
+
+    #[cfg(feature = "devkit")]
+    if t_build_ui + t_sync + t_taffy > 16.0 {
+        sniffer_core::dev_log!(
+            "[MainThread Breakdown] Total: {:.1}ms (JS build_ui: {:.1}ms, Tree sync: {:.1}ms, Taffy layout: {:.1}ms)",
+            frame_start.elapsed().as_secs_f32() * 1000.0,
+            t_build_ui,
+            t_sync,
+            t_taffy
+        );
+    }
 
     let get_max_scroll = |target_id: Option<u64>| -> f32 {
         target_id

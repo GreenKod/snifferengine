@@ -45,10 +45,17 @@ function AppDrawerCardComponent(app, index, isLandscape, isBottomFloor) {
             translate_y: cardTranslateY,
             scale: 1.0,
         },
+        enter_from: {
+            opacity: 0.0,
+            transform: {
+                translate_y: vh(6.0),
+                scale: 1.0,
+            }
+        },
         transition: {
             duration: 0.35,
             easing: { spring: { stiffness: 280, damping: 24 } },
-            stagger_index: Math.min(index, 24),
+            stagger_index: index,
             stagger_interval: 0.015,
         },
     }, [
@@ -243,6 +250,13 @@ function AppDrawerComponent() {
         transform: {
             translate_y: isBottomFloor ? 0.0 : vh(100.0),
             scale: 1.0,
+        },
+        enter_from: {
+            opacity: 0.0,
+            transform: {
+                translate_y: vh(100.0),
+                scale: 1.0,
+            }
         },
         transition: {
             duration: 0.36,

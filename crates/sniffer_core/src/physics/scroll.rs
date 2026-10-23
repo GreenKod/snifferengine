@@ -26,6 +26,7 @@ pub struct ScrollPhysics {
     pub rubber_band: Option<f32>,
     pub page_count: Option<u32>,
     pub on_snap: Option<String>,
+    pub drag_start_x: f32,
 }
 
 impl Default for ScrollPhysics {
@@ -49,6 +50,7 @@ impl Default for ScrollPhysics {
             rubber_band: None,
             page_count: None,
             on_snap: None,
+            drag_start_x: 0.0,
         }
     }
 }
@@ -162,7 +164,7 @@ impl ScrollPhysics {
                 self.spring_sim_y = None;
             }
         } else if !self.is_dragging && self.vel_y.abs() > 0.5 {
-            let (step_y, next_vy) = super::velocity::step_momentum_decay(self.vel_y, 3.6, dt);
+            let (step_y, next_vy) = super::velocity::step_momentum_decay(self.vel_y, 5.8, dt);
             self.pos_y += step_y;
             self.vel_y = next_vy;
             active = true;
@@ -198,6 +200,9 @@ impl ScrollPhysics {
     }
 
     pub fn apply_drag(&mut self, delta_x: f32) {
+        if !self.is_dragging {
+            self.drag_start_x = self.pos_x;
+        }
         self.is_dragging = true;
         self.vel_x = 0.0;
         self.snap_target_x = None;
@@ -243,7 +248,7 @@ impl ScrollPhysics {
     pub fn release_drag_y(&mut self, vel_y: f32) {
         self.is_dragging = false;
         let max_limit_y = self.max_y.unwrap_or(0.0);
-        let clamped_vel = vel_y.clamp(-10000.0, 10000.0);
+        let clamped_vel = vel_y.clamp(-4500.0, 4500.0);
         if self.pos_y < 0.0 {
             self.vel_y = 0.0;
             self.spring_sim_y = Some(
@@ -273,60 +278,46 @@ impl ScrollPhysics {
         if let Some(page_width) = self.snap_x {
             if page_width > 0.0 {
                 let last_page = (self.page_count.unwrap_or(1) as f32) - 1.0;
-                let page_float = self.pos_x / page_width;
+                let start_page = (self.drag_start_x / page_width)
+                    .round()
+                    .clamp(0.0, last_page);
+                let delta = self.pos_x - (start_page * page_width);
+                let frac = delta / page_width;
                 let screens_per_sec = vel_x.abs() / page_width;
-                let progress = page_float - page_float.floor();
 
-                // Target page resolution normalized to screen width:
-                // - Dragging past 50% midpoint commits to the page.
-                // - A decisive flick (screens_per_sec >= 1.0) with at least 15% displacement commits to 1 page.
-                // - Normal fast flicks (up to 4.5 screens/sec) advance EXACTLY 1 page.
-                // - Only extreme power sweeps (> 4.5 screens/sec) leap 2+ pages.
-                let target_page = if vel_x > 0.0 {
-                    // Swiping right-to-left (towards next page)
-                    let committed = progress >= 0.50
-                        || (progress >= 0.15 && screens_per_sec >= 1.0)
-                        || (progress >= 0.40 && screens_per_sec >= 0.35);
-                    if committed {
-                        let extra_pages = if screens_per_sec > 4.5 {
-                            ((screens_per_sec - 4.5) / 2.5).floor() + 1.0
-                        } else {
-                            0.0
-                        };
-                        (page_float.floor() + 1.0 + extra_pages).min(last_page)
+                // Deterministic single-page advance:
+                // Dragging commits at 35% displacement.
+                // Decisive flick (>= 0.75 screens/sec) commits with >= 6% displacement.
+                // A single swipe advances AT MOST 1 page, preventing double-page skips.
+                let target_page = if vel_x > 100.0 {
+                    if frac >= 0.06 || screens_per_sec >= 0.8 {
+                        (start_page + 1.0).min(last_page)
                     } else {
-                        page_float.floor().clamp(0.0, last_page)
+                        start_page
                     }
-                } else if vel_x < 0.0 {
-                    // Swiping left-to-right (towards previous page)
-                    let committed = progress <= 0.50
-                        || (progress <= 0.85 && screens_per_sec >= 1.0)
-                        || (progress <= 0.60 && screens_per_sec >= 0.35);
-                    if committed {
-                        let extra_pages = if screens_per_sec > 4.5 {
-                            ((screens_per_sec - 4.5) / 2.5).floor() + 1.0
-                        } else {
-                            0.0
-                        };
-                        (page_float.ceil() - 1.0 - extra_pages).max(0.0)
+                } else if vel_x < -100.0 {
+                    if frac <= -0.06 || screens_per_sec >= 0.8 {
+                        (start_page - 1.0).max(0.0)
                     } else {
-                        page_float.ceil().clamp(0.0, last_page)
+                        start_page
                     }
+                } else if frac >= 0.35 {
+                    (start_page + 1.0).min(last_page)
+                } else if frac <= -0.35 {
+                    (start_page - 1.0).max(0.0)
                 } else {
-                    page_float.round().clamp(0.0, last_page)
+                    start_page
                 };
 
                 let target_x = (target_page * page_width).clamp(0.0, max_x);
                 self.snap_target_x = Some(target_x);
                 self.spring_start_x = self.pos_x;
 
-                // Dynamic spring response based directly on release velocity:
-                // - Slow drag / release: k = 180, c = 26.8 -> smooth, gentle 400ms glide.
-                // - Normal swipe:        k = 420, c = 41.0 -> standard 240ms snappy snap.
-                // - Fast flick:          k = 720, c = 53.7 -> brisk 170ms rapid lock-in.
-                // - Extreme sweep:       k = 900, c = 60.0 -> ultra-fast 140ms response.
-                let k = (180.0 + screens_per_sec * 180.0).clamp(180.0, 900.0);
-                let c = 2.0 * k.sqrt();
+                // Dynamic spring tuning:
+                // Fast flicks snap into place quickly (k up to 1200, ~120ms lock-in)
+                // Slow drags glide into place smoothly (k = 220, ~320ms glide)
+                let k = (220.0 + screens_per_sec * 240.0).clamp(220.0, 1200.0);
+                let c = 1.95 * k.sqrt();
                 let dynamic_spring = SpringConfig {
                     mass: 1.0,
                     stiffness: k,
@@ -335,18 +326,13 @@ impl ScrollPhysics {
                     velocity_tolerance: 0.1,
                 };
 
-                // Clamp initial velocity into the spring simulation:
-                let max_screen_vel = 8.0 * page_width;
-                let mut init_vel = self.vel_x.clamp(-max_screen_vel, max_screen_vel);
+                let max_screen_vel = 6.0 * page_width;
                 let dist_to_target = target_x - self.pos_x;
+                let mut init_vel = self.vel_x.clamp(-max_screen_vel, max_screen_vel);
                 if (dist_to_target > 0.0 && init_vel < 0.0)
                     || (dist_to_target < 0.0 && init_vel > 0.0)
                 {
                     init_vel = 0.0;
-                } else {
-                    let omega_0 = k.sqrt();
-                    let max_forward_vel = 1.6 * omega_0 * dist_to_target.abs();
-                    init_vel = init_vel.clamp(-max_forward_vel, max_forward_vel);
                 }
 
                 self.spring_start_vel_x = init_vel;

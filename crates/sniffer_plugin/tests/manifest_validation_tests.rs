@@ -907,12 +907,21 @@ fn test_app_drawer_frosted_glass_backdrop_blur_and_tint_stage_2_1() {
             "App drawer fallback background_color must be 0x880A0E17"
         );
 
-        // 4. Verify Root() renders app_drawer_root
-        let root_ui_str: String = c.eval("JSON.stringify(Root())").unwrap();
-        let root_ui: sniffer_core::types::Element = serde_json::from_str(&root_ui_str).unwrap();
+        // 4. Verify Root() does NOT render app_drawer_root when drawer is unmounted on home floor
+        let root_ui_closed_str: String = c.eval("JSON.stringify(Root())").unwrap();
+        let root_ui_closed: sniffer_core::types::Element = serde_json::from_str(&root_ui_closed_str).unwrap();
         assert!(
-            find_element(&root_ui, "app_drawer_root").is_some(),
-            "Root UI must contain app_drawer_root"
+            find_element(&root_ui_closed, "app_drawer_root").is_none(),
+            "Root UI must not contain app_drawer_root when drawer is unmounted on home screen"
+        );
+
+        // 5. Open drawer and verify Root() mounts app_drawer_root
+        c.eval::<(), _>("state.goToBottomFloor()").unwrap();
+        let root_ui_open_str: String = c.eval("JSON.stringify(Root())").unwrap();
+        let root_ui_open: sniffer_core::types::Element = serde_json::from_str(&root_ui_open_str).unwrap();
+        assert!(
+            find_element(&root_ui_open, "app_drawer_root").is_some(),
+            "Root UI must contain app_drawer_root when drawer is mounted"
         );
     });
 }
