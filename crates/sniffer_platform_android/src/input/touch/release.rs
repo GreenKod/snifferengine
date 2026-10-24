@@ -48,11 +48,14 @@ pub fn handle_touch_release(
             };
 
             if momentum_enabled {
-                state.physics.kinetic_scrolls.push(crate::app::KineticScroll {
-                    sv_id,
-                    velocity_x: fling_vel_x,
-                    velocity_y: fling_vel_y,
-                });
+                state
+                    .physics
+                    .kinetic_scrolls
+                    .push(crate::app::KineticScroll {
+                        sv_id,
+                        velocity_x: fling_vel_x,
+                        velocity_y: fling_vel_y,
+                    });
             }
         }
     }
@@ -71,7 +74,10 @@ pub fn handle_touch_release(
         state.runtime.event_bus.push(UiEvent::HoverEnd(prev));
     }
 
-    state.runtime.event_bus.push(UiEvent::PointerUp(released_btn));
+    state
+        .runtime
+        .event_bus
+        .push(UiEvent::PointerUp(released_btn));
 
     let density = state.layout.cached_density.0.max(1.0);
     let is_static_tap = crate::input::gestures::GestureClassifier::is_tap(

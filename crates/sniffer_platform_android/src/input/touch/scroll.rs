@@ -70,7 +70,10 @@ pub fn handle_touch_move_or_down(
                 resolve_active_scroll(&state.physics.scroll_physics, id_opt, sx, sy)
             })
         {
-            state.runtime.event_bus.push(UiEvent::PointerDown(clicked_btn));
+            state
+                .runtime
+                .event_bus
+                .push(UiEvent::PointerDown(clicked_btn));
         } else {
             state.runtime.event_bus.push(UiEvent::PointerDown(0));
         }

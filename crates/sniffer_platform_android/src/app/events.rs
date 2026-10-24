@@ -53,7 +53,10 @@ pub fn poll_and_handle_events(
                 };
 
                 if width >= 1.0 && height >= 1.0 {
-                    state.runtime.event_bus.push(UiEvent::WindowResized(width, height));
+                    state
+                        .runtime
+                        .event_bus
+                        .push(UiEvent::WindowResized(width, height));
                 }
                 state.layout.cached_layout = None;
                 state.physics.cached_max_scroll.clear();
@@ -75,7 +78,8 @@ pub fn poll_and_handle_events(
                 if let Ok(mut iter) = app.input_events_iter() {
                     loop {
                         let had_event = iter.next(|input_event| {
-                            let layout_clone = if let Some(ref cached) = state.layout.cached_layout {
+                            let layout_clone = if let Some(ref cached) = state.layout.cached_layout
+                            {
                                 cached.clone()
                             } else {
                                 // No layout yet — compute a best-effort one so hit-testing

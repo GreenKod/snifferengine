@@ -68,9 +68,15 @@ fn resolve_viewport_metrics(
         sniffer_core::types::SCREEN_HEIGHT
             .store(height.to_bits(), std::sync::atomic::Ordering::Relaxed);
 
-        state.runtime.plugin_registry.broadcast("dock.stateChanged", "{}");
+        state
+            .runtime
+            .plugin_registry
+            .broadcast("dock.stateChanged", "{}");
         state.runtime.plugin_registry.broadcast("dock.ready", "{}");
-        state.runtime.plugin_registry.broadcast("system.resized", "{}");
+        state
+            .runtime
+            .plugin_registry
+            .broadcast("system.resized", "{}");
 
         ui_changed = true;
     }
@@ -128,8 +134,14 @@ fn sync_ui_tree_and_virtualization(
             .layout
             .virtual_page_manager
             .on_viewport_resized(width, height, root_element);
-        state.layout.virtual_page_manager.virtualize_tree(root_element);
-        physics_sync::sync_scroll_physics_from_tree(root_element, &mut state.physics.scroll_physics);
+        state
+            .layout
+            .virtual_page_manager
+            .virtualize_tree(root_element);
+        physics_sync::sync_scroll_physics_from_tree(
+            root_element,
+            &mut state.physics.scroll_physics,
+        );
         state.runtime.transition_manager.sync_tree(root_element);
     }
     #[cfg(feature = "devkit")]
@@ -138,8 +150,8 @@ fn sync_ui_tree_and_virtualization(
     } else {
         0.0_f32
     };
-    let is_animating =
-        state.runtime.transition_manager.tick(dt) || state.runtime.transition_manager.is_animating();
+    let is_animating = state.runtime.transition_manager.tick(dt)
+        || state.runtime.transition_manager.is_animating();
 
     (
         is_animating,
@@ -279,11 +291,10 @@ fn step_physics_and_kinetics(
                     let page_float = (phys.pos_x / snap_width).clamp(0.0, max_page as f32);
                     let clamped_page = page_float.round() as usize;
 
-                    let page_window_changed = state.layout.virtual_page_manager.update_predicted_page(
-                        clamped_page,
-                        root_element,
-                        phys.vel_x,
-                    );
+                    let page_window_changed = state
+                        .layout
+                        .virtual_page_manager
+                        .update_predicted_page(clamped_page, root_element, phys.vel_x);
 
                     if page_window_changed {
                         state.layout.cached_layout = None;

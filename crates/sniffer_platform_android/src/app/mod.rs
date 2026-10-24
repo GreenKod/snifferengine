@@ -154,11 +154,12 @@ pub fn android_main(app: AndroidApp) {
             if let Ok(apps) = crate::jni::get_application_list() {
                 let pkg_names: Vec<String> = apps.iter().map(|a| a.package_name.clone()).collect();
                 crate::jni::bridge::prefetch_app_icons(&pkg_names);
-                let _ = state
-                    .runtime
-                    .plugin_registry
-                    .vault()
-                    .set_json("system.apps", &apps, "system");
+                let _ =
+                    state
+                        .runtime
+                        .plugin_registry
+                        .vault()
+                        .set_json("system.apps", &apps, "system");
                 state
                     .runtime
                     .plugin_registry
@@ -169,7 +170,11 @@ pub fn android_main(app: AndroidApp) {
             }
         }
 
-        let has_pending_actions = state.runtime.action_queue.lock().is_ok_and(|q| !q.is_empty());
+        let has_pending_actions = state
+            .runtime
+            .action_queue
+            .lock()
+            .is_ok_and(|q| !q.is_empty());
         let has_active_event = needs_redraw
             || has_active_animation
             || has_pending_actions

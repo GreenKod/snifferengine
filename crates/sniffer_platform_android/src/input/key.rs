@@ -55,7 +55,10 @@ pub fn handle_key_event(key_event: &KeyEvent, state: &mut crate::app::AppState) 
         if keycode == Keycode::Del {
             state.runtime.event_bus.push(UiEvent::Backspace);
         } else if let Some(c) = keycode_to_char(keycode) {
-            state.runtime.event_bus.push(UiEvent::TextInput(c.to_string()));
+            state
+                .runtime
+                .event_bus
+                .push(UiEvent::TextInput(c.to_string()));
         }
     }
     InputStatus::Handled
