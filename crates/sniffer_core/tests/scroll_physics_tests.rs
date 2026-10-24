@@ -218,3 +218,149 @@ fn test_scroll_physics_hundreds_of_rapid_page_swipes() {
         assert!(!phys.is_animating(), "Iteration {i} failed to reach rest");
     }
 }
+
+#[test]
+fn test_scroll_physics_action_cancel_safety() {
+    let page_w = 720.0;
+    let mut phys = ScrollPhysics {
+        snap_x: Some(page_w),
+        page_count: Some(4),
+        ..Default::default()
+    };
+
+    // 1. User starts drag on Page 0, moves 120px (under 35%), and gesture is CANCELLED (e.g. system dialog, phone call)
+    phys.apply_drag(120.0);
+    assert!(phys.is_dragging);
+    assert_eq!(phys.pos_x, 120.0);
+
+    // Cancel triggers release with zero velocity
+    phys.release_drag(0.0);
+    assert!(!phys.is_dragging);
+    assert_eq!(
+        phys.snap_target_x,
+        Some(0.0),
+        "Should snap back to Page 0 (< 35% displacement)"
+    );
+
+    let dt = 1.0 / 120.0;
+    let mut steps = 0;
+    while phys.tick(dt) && steps < 600 {
+        steps += 1;
+    }
+    assert_eq!(phys.pos_x, 0.0);
+    assert_eq!(phys.vel_x, 0.0);
+    assert!(!phys.is_animating());
+
+    // 2. User drags beyond 35% (300px) and gesture is cancelled:
+    phys.apply_drag(300.0);
+    assert!(phys.is_dragging);
+    assert_eq!(phys.pos_x, 300.0);
+
+    phys.release_drag(0.0);
+    assert!(!phys.is_dragging);
+    assert_eq!(
+        phys.snap_target_x,
+        Some(page_w),
+        "Should snap to Page 1 (>= 35% displacement)"
+    );
+
+    steps = 0;
+    while phys.tick(dt) && steps < 600 {
+        steps += 1;
+    }
+    assert_eq!(phys.pos_x, page_w);
+    assert_eq!(phys.vel_x, 0.0);
+    assert!(!phys.is_animating());
+}
+
+#[test]
+fn test_scroll_physics_retouch_during_active_spring() {
+    let page_w = 720.0;
+    let mut phys = ScrollPhysics {
+        snap_x: Some(page_w),
+        page_count: Some(3),
+        ..Default::default()
+    };
+
+    // Start flick from Page 0 to Page 1
+    phys.apply_drag(200.0);
+    phys.release_drag(1200.0);
+    assert_eq!(phys.snap_target_x, Some(page_w));
+    assert!(phys.spring_sim_x.is_some());
+
+    // Step 8 frames (~67ms) into the spring motion
+    let dt = 1.0 / 120.0;
+    for _ in 0..8 {
+        phys.tick(dt);
+    }
+    let mid_flight_x = phys.pos_x;
+    assert!(mid_flight_x > 200.0 && mid_flight_x < page_w);
+    assert!(phys.is_animating());
+
+    // User touches down mid-flight: arrest simulation cleanly
+    phys.vel_x = 0.0;
+    phys.spring_sim_x = None;
+    phys.snap_target_x = None;
+    phys.is_dragging = true;
+    phys.drag_start_x = phys.pos_x;
+
+    assert!(
+        phys.spring_sim_x.is_none(),
+        "Spring simulation must be arrested"
+    );
+    assert!(phys.snap_target_x.is_none(), "Snap target must be cleared");
+    assert_eq!(phys.vel_x, 0.0, "Velocity must be arrested to zero");
+    assert!(
+        phys.is_dragging,
+        "Scroll physics is now controlled by touch drag"
+    );
+
+    // User decides to flick back towards Page 0
+    phys.apply_drag(-150.0);
+    phys.release_drag(-1600.0);
+
+    assert_eq!(phys.snap_target_x, Some(0.0));
+    assert!(phys.spring_sim_x.is_some());
+
+    let mut steps = 0;
+    while phys.tick(dt) && steps < 600 {
+        steps += 1;
+    }
+    assert_eq!(phys.pos_x, 0.0);
+    assert_eq!(phys.vel_x, 0.0);
+    assert!(!phys.is_animating());
+}
+
+#[test]
+fn test_drawer_navigation_cancels_ongoing_vertical_momentum() {
+    let mut drawer_phys = ScrollPhysics {
+        max_y: Some(3000.0),
+        ..Default::default()
+    };
+
+    // Simulate active vertical scrolling momentum in app drawer
+    drawer_phys.pos_y = 450.0;
+    drawer_phys.vel_y = 1800.0;
+    drawer_phys.is_dragging = false;
+
+    // Tick a few frames: momentum is actively running
+    let dt = 1.0 / 120.0;
+    drawer_phys.tick(dt);
+    assert!(
+        drawer_phys.is_animating(),
+        "Drawer scroll momentum should be active"
+    );
+
+    // User initiates SwipeDown to return to Home Screen:
+    // Navigation immediately resets drawer vertical physics
+    drawer_phys.pos_y = 0.0;
+    drawer_phys.vel_y = 0.0;
+    drawer_phys.spring_sim_y = None;
+
+    assert!(
+        !drawer_phys.is_animating(),
+        "Drawer vertical physics must be completely inactive immediately upon SwipeDown"
+    );
+    assert_eq!(drawer_phys.pos_y, 0.0);
+    assert_eq!(drawer_phys.vel_y, 0.0);
+}
