@@ -1,10 +1,9 @@
 pub mod idle;
 pub mod image_loader;
+pub mod input;
 
 #[cfg(target_os = "android")]
 pub mod app;
-#[cfg(target_os = "android")]
-pub mod input;
 #[cfg(target_os = "android")]
 pub mod jni;
 #[cfg(target_os = "android")]

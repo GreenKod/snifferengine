@@ -15,13 +15,7 @@ pub struct KineticScroll {
     pub velocity_y: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum GestureAxis {
-    #[default]
-    Undetermined,
-    Horizontal,
-    Vertical,
-}
+pub use crate::input::gestures::GestureAxis;
 
 #[allow(clippy::struct_excessive_bools)]
 pub struct AppState {

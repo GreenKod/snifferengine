@@ -74,9 +74,11 @@ pub fn handle_touch_release(
     state.event_bus.push(UiEvent::PointerUp(released_btn));
 
     let density = state.cached_density.0.max(1.0);
-    let tap_threshold = 48.0 * density;
-    let tap_dist = (point.x - state.touch_start_pos.x).hypot(point.y - state.touch_start_pos.y);
-    let is_static_tap = tap_dist < tap_threshold;
+    let is_static_tap = crate::input::gestures::GestureClassifier::is_tap(
+        state.touch_start_pos,
+        point,
+        density,
+    );
 
     #[cfg(feature = "devkit")]
     {
@@ -127,51 +129,39 @@ pub fn handle_touch_release(
             state.event_bus.push(UiEvent::ClickOutside);
         }
     } else {
-        let dy = point.y - state.touch_start_pos.y;
-        let dx = point.x - state.touch_start_pos.x;
         let was_scrolled_down = state.active_scrollview_start_y > 10.0;
-        let vel_y_down = -fling_vel_y;
+        let swipe_gesture = crate::input::gestures::GestureClassifier::classify_vertical_swipe(
+            state.touch_start_pos,
+            point,
+            fling_vel_y,
+            density,
+            state.gesture_axis,
+            was_scrolled_down,
+        );
 
-        let swipe_thresh = 120.0 * density;
-        let flick_thresh = 50.0 * density;
-
-        if state.gesture_axis == crate::app::state::GestureAxis::Vertical
-            || (state.gesture_axis == crate::app::state::GestureAxis::Undetermined
-                && dy.abs() > dx.abs() * 1.3)
-        {
-            if dy < 0.0 {
-                // SwipeUp: Open drawer from home screen
-                let upward_dist = -dy;
-                let is_flick = upward_dist > flick_thresh && vel_y_down < -400.0;
-                let is_drag = upward_dist >= swipe_thresh;
-                if is_flick || is_drag {
-                    state.event_bus.push(UiEvent::SwipeUp);
+        match swipe_gesture {
+            Some(crate::input::gestures::VerticalSwipeGesture::SwipeUp) => {
+                state.event_bus.push(UiEvent::SwipeUp);
+            }
+            Some(crate::input::gestures::VerticalSwipeGesture::SwipeDown) => {
+                state.event_bus.push(UiEvent::SwipeDown);
+                let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
+                if let Some(phys) = state.scroll_physics.get_mut(&drawer_id) {
+                    phys.pos_y = 0.0;
+                    phys.vel_y = 0.0;
+                    phys.spring_sim_y = None;
                 }
-            } else if !was_scrolled_down {
-                // SwipeDown: Close drawer back to home screen
-                // Only allowed when NOT scrolled down within the list of apps!
-                let downward_dist = dy;
-                let is_flick = downward_dist > flick_thresh && vel_y_down > 400.0;
-                let is_drag = downward_dist >= (swipe_thresh * 1.1);
-                if is_flick || is_drag {
-                    state.event_bus.push(UiEvent::SwipeDown);
-                    let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
-                    if let Some(phys) = state.scroll_physics.get_mut(&drawer_id) {
-                        phys.pos_y = 0.0;
-                        phys.vel_y = 0.0;
-                        phys.spring_sim_y = None;
-                    }
-                    if let Some(sv_id) = released_sv_id {
-                        if let Some(phys) = state.scroll_physics.get_mut(&sv_id) {
-                            if phys.snap_x.is_none() {
-                                phys.pos_y = 0.0;
-                                phys.vel_y = 0.0;
-                                phys.spring_sim_y = None;
-                            }
+                if let Some(sv_id) = released_sv_id {
+                    if let Some(phys) = state.scroll_physics.get_mut(&sv_id) {
+                        if phys.snap_x.is_none() {
+                            phys.pos_y = 0.0;
+                            phys.vel_y = 0.0;
+                            phys.spring_sim_y = None;
                         }
                     }
                 }
             }
+            None => {}
         }
         state.event_bus.push(UiEvent::ClickOutside);
     }

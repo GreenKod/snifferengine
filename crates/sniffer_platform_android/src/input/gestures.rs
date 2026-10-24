@@ -1,135 +1,161 @@
-use android_activity::input::Keycode;
+use sniffer_core::Point;
 
-pub struct TouchSlopFilter {
-    pub touch_slop_px: f32,
-    pub start_pos: Option<(f32, f32)>,
-    pub is_slop_passed: bool,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum GestureAxis {
+    #[default]
+    Undetermined,
+    Horizontal,
+    Vertical,
 }
 
-impl TouchSlopFilter {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerticalSwipeGesture {
+    SwipeUp,
+    SwipeDown,
+}
+
+pub struct GestureClassifier;
+
+impl GestureClassifier {
+    /// Determines whether a touch movement qualifies as a static tap based on distance threshold.
     #[must_use]
-    pub fn new(touch_slop_px: f32) -> Self {
-        Self {
-            touch_slop_px,
-            start_pos: None,
-            is_slop_passed: false,
-        }
+    pub fn is_tap(start_pos: Point, end_pos: Point, density: f32) -> bool {
+        let tap_threshold = 48.0 * density.max(1.0);
+        let tap_dist = (end_pos.x - start_pos.x).hypot(end_pos.y - start_pos.y);
+        tap_dist < tap_threshold
     }
 
-    pub fn start(&mut self, x: f32, y: f32) {
-        self.start_pos = Some((x, y));
-        self.is_slop_passed = false;
-    }
+    /// Classifies vertical gestures into `SwipeUp` or `SwipeDown`, respecting axis locking and scroll boundaries.
+    #[must_use]
+    pub fn classify_vertical_swipe(
+        start_pos: Point,
+        end_pos: Point,
+        fling_vel_y: f32,
+        density: f32,
+        gesture_axis: GestureAxis,
+        was_scrolled_down: bool,
+    ) -> Option<VerticalSwipeGesture> {
+        let dy = end_pos.y - start_pos.y;
+        let dx = end_pos.x - start_pos.x;
+        let vel_y_down = -fling_vel_y;
 
-    pub fn filter(&mut self, x: f32, y: f32) -> bool {
-        if self.is_slop_passed {
-            return true;
+        let swipe_thresh = 120.0 * density.max(1.0);
+        let flick_thresh = 50.0 * density.max(1.0);
+
+        let is_vertical = gesture_axis == GestureAxis::Vertical
+            || (gesture_axis == GestureAxis::Undetermined && dy.abs() > dx.abs() * 1.3);
+
+        if !is_vertical {
+            return None;
         }
-        if let Some((sx, sy)) = self.start_pos {
-            let dx = x - sx;
-            let dy = y - sy;
-            let dist_sq = dx.mul_add(dx, dy * dy);
-            if dist_sq >= self.touch_slop_px * self.touch_slop_px {
-                self.is_slop_passed = true;
-                return true;
+
+        if dy < 0.0 {
+            // SwipeUp: Open drawer from home screen
+            let upward_dist = -dy;
+            let is_flick = upward_dist > flick_thresh && vel_y_down < -400.0;
+            let is_drag = upward_dist >= swipe_thresh;
+            if is_flick || is_drag {
+                return Some(VerticalSwipeGesture::SwipeUp);
+            }
+        } else if !was_scrolled_down {
+            // SwipeDown: Close drawer back to home screen
+            // Only allowed when NOT scrolled down within the list of apps!
+            let downward_dist = dy;
+            let is_flick = downward_dist > flick_thresh && vel_y_down > 400.0;
+            let is_drag = downward_dist >= (swipe_thresh * 1.1);
+            if is_flick || is_drag {
+                return Some(VerticalSwipeGesture::SwipeDown);
             }
         }
-        false
+
+        None
     }
 }
 
-pub struct VelocityTracker {
-    samples: std::collections::VecDeque<(f32, f32, std::time::Instant)>,
-    max_samples: usize,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl VelocityTracker {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            samples: std::collections::VecDeque::with_capacity(10),
-            max_samples: 8,
-        }
+    #[test]
+    fn test_tap_detection() {
+        let start = Point::new(100.0, 100.0);
+        let end_within = Point::new(110.0, 105.0);
+        let end_outside = Point::new(100.0, 200.0);
+
+        assert!(GestureClassifier::is_tap(start, end_within, 2.0));
+        assert!(!GestureClassifier::is_tap(start, end_outside, 2.0));
     }
 
-    pub fn add_movement(&mut self, x: f32, y: f32) {
-        let now = std::time::Instant::now();
-        if self.samples.len() >= self.max_samples {
-            self.samples.pop_front();
-        }
-        self.samples.push_back((x, y, now));
+    #[test]
+    fn test_swipe_up_flick_and_drag() {
+        let start = Point::new(300.0, 800.0);
+        let end_flick = Point::new(300.0, 680.0); // 120px up (>= 50*2=100)
+        let end_drag = Point::new(300.0, 500.0); // 300px up (>= 120*2=240)
+
+        // Flick with high upward velocity (fling_vel_y = 600, vel_y_down = -600)
+        let res_flick = GestureClassifier::classify_vertical_swipe(
+            start,
+            end_flick,
+            600.0,
+            2.0,
+            GestureAxis::Vertical,
+            false,
+        );
+        assert_eq!(res_flick, Some(VerticalSwipeGesture::SwipeUp));
+
+        // Drag with 0 velocity
+        let res_drag = GestureClassifier::classify_vertical_swipe(
+            start,
+            end_drag,
+            0.0,
+            2.0,
+            GestureAxis::Vertical,
+            false,
+        );
+        assert_eq!(res_drag, Some(VerticalSwipeGesture::SwipeUp));
     }
 
-    #[must_use]
-    pub fn compute_velocity(&self) -> (f32, f32) {
-        if self.samples.len() < 2 {
-            return (0.0, 0.0);
-        }
-        let first = self.samples.front().unwrap();
-        let last = self.samples.back().unwrap();
-        let dt = last.2.duration_since(first.2).as_secs_f32();
-        if dt <= 0.001 {
-            return (0.0, 0.0);
-        }
-        let vx = (last.0 - first.0) / dt;
-        let vy = (last.1 - first.1) / dt;
-        (vx, vy)
+    #[test]
+    fn test_swipe_down_blocked_when_scrolled() {
+        let start = Point::new(300.0, 400.0);
+        let end = Point::new(300.0, 800.0); // 400px down
+
+        // When scrolled down > 10px, SwipeDown MUST be blocked
+        let res_blocked = GestureClassifier::classify_vertical_swipe(
+            start,
+            end,
+            -600.0, // vel_y_down = 600
+            2.0,
+            GestureAxis::Vertical,
+            true, // was_scrolled_down = true
+        );
+        assert_eq!(res_blocked, None);
+
+        // When at top, SwipeDown is allowed
+        let res_allowed = GestureClassifier::classify_vertical_swipe(
+            start,
+            end,
+            -600.0,
+            2.0,
+            GestureAxis::Vertical,
+            false,
+        );
+        assert_eq!(res_allowed, Some(VerticalSwipeGesture::SwipeDown));
     }
 
-    pub fn reset(&mut self) {
-        self.samples.clear();
-    }
-}
+    #[test]
+    fn test_horizontal_axis_rejected() {
+        let start = Point::new(300.0, 400.0);
+        let end = Point::new(300.0, 800.0);
 
-impl Default for VelocityTracker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[must_use]
-pub fn keycode_to_char(keycode: Keycode) -> Option<char> {
-    match keycode {
-        Keycode::A => Some('a'),
-        Keycode::B => Some('b'),
-        Keycode::C => Some('c'),
-        Keycode::D => Some('d'),
-        Keycode::E => Some('e'),
-        Keycode::F => Some('f'),
-        Keycode::G => Some('g'),
-        Keycode::H => Some('h'),
-        Keycode::I => Some('i'),
-        Keycode::J => Some('j'),
-        Keycode::K => Some('k'),
-        Keycode::L => Some('l'),
-        Keycode::M => Some('m'),
-        Keycode::N => Some('n'),
-        Keycode::O => Some('o'),
-        Keycode::P => Some('p'),
-        Keycode::Q => Some('q'),
-        Keycode::R => Some('r'),
-        Keycode::S => Some('s'),
-        Keycode::T => Some('t'),
-        Keycode::U => Some('u'),
-        Keycode::V => Some('v'),
-        Keycode::W => Some('w'),
-        Keycode::X => Some('x'),
-        Keycode::Y => Some('y'),
-        Keycode::Z => Some('z'),
-        Keycode::Keycode0 => Some('0'),
-        Keycode::Keycode1 => Some('1'),
-        Keycode::Keycode2 => Some('2'),
-        Keycode::Keycode3 => Some('3'),
-        Keycode::Keycode4 => Some('4'),
-        Keycode::Keycode5 => Some('5'),
-        Keycode::Keycode6 => Some('6'),
-        Keycode::Keycode7 => Some('7'),
-        Keycode::Keycode8 => Some('8'),
-        Keycode::Keycode9 => Some('9'),
-        Keycode::Space => Some(' '),
-        Keycode::Period => Some('.'),
-        Keycode::Comma => Some(','),
-        Keycode::Minus => Some('-'),
-        _ => None,
+        let res = GestureClassifier::classify_vertical_swipe(
+            start,
+            end,
+            -600.0,
+            2.0,
+            GestureAxis::Horizontal, // Locked to horizontal
+            false,
+        );
+        assert_eq!(res, None);
     }
 }
