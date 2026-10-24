@@ -155,7 +155,7 @@ pub fn handle_touch_release(
                 let is_drag = downward_dist >= (swipe_thresh * 1.1);
                 if is_flick || is_drag {
                     state.event_bus.push(UiEvent::SwipeDown);
-                    let drawer_id = sniffer_core::ui::widget::fnv1a("app_drawer_scroll".as_bytes());
+                    let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
                     if let Some(phys) = state.scroll_physics.get_mut(&drawer_id) {
                         phys.pos_y = 0.0;
                         phys.vel_y = 0.0;

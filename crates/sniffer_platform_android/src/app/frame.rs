@@ -75,19 +75,19 @@ pub fn update_and_render_state(
 
     let is_first_frame =
         matches!(root_element, Element::Container { children, .. } if children.is_empty());
-    let mut t_build_ui = 0.0_f32;
-    if ui_changed || is_first_frame {
+    let t_build_ui = if ui_changed || is_first_frame {
         let b0 = std::time::Instant::now();
         if let Some(new_root) = state.plugin_registry.build_ui() {
             *root_element = new_root;
             state.cached_root_element = Arc::new(root_element.clone());
             state.layout_dirty = true;
         }
-        t_build_ui = b0.elapsed().as_secs_f32() * 1000.0;
-    }
+        b0.elapsed().as_secs_f32() * 1000.0
+    } else {
+        0.0_f32
+    };
 
-    let mut t_sync = 0.0_f32;
-    if ui_changed || screen_changed || is_first_frame {
+    let t_sync = if ui_changed || screen_changed || is_first_frame {
         let s0 = std::time::Instant::now();
         state
             .virtual_page_manager
@@ -95,8 +95,10 @@ pub fn update_and_render_state(
         state.virtual_page_manager.virtualize_tree(root_element);
         physics_sync::sync_scroll_physics_from_tree(root_element, &mut state.scroll_physics);
         state.transition_manager.sync_tree(root_element);
-        t_sync = s0.elapsed().as_secs_f32() * 1000.0;
-    }
+        s0.elapsed().as_secs_f32() * 1000.0
+    } else {
+        0.0_f32
+    };
     let is_animating = state.transition_manager.tick(dt) || state.transition_manager.is_animating();
 
     let (density, scaled_density) = state.cached_density;
