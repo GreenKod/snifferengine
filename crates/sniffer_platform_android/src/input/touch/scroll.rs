@@ -44,9 +44,9 @@ pub fn handle_touch_move_or_down(
             let sv_id = id
                 .as_deref()
                 .map(|id_str| sniffer_core::ui::widget::fnv1a(id_str.as_bytes()));
-            state.active_scrollview_drag = sv_id;
+            state.input.active_scrollview_drag = sv_id;
             if let Some(id_val) = sv_id {
-                if let Some(phys) = state.scroll_physics.get_mut(&id_val) {
+                if let Some(phys) = state.physics.scroll_physics.get_mut(&id_val) {
                     phys.vel_x = 0.0;
                     phys.vel_y = 0.0;
                     phys.spring_sim_x = None;
@@ -57,47 +57,49 @@ pub fn handle_touch_move_or_down(
                 }
             }
         }
-        state.kinetic_scrolls.clear();
-        state.drag_history.clear();
-        state.active_scrollview_start_y = state
+        state.physics.kinetic_scrolls.clear();
+        state.input.drag_history.clear();
+        state.input.active_scrollview_start_y = state
+            .input
             .active_scrollview_drag
-            .and_then(|id| state.scroll_physics.get(&id))
+            .and_then(|id| state.physics.scroll_physics.get(&id))
             .map_or(0.0, |p| p.pos_y);
 
         if let Some((clicked_btn, _)) =
             find_clicked_button_with_scroll(root_element, layout_tree, point, &|id_opt, sx, sy| {
-                resolve_active_scroll(&state.scroll_physics, id_opt, sx, sy)
+                resolve_active_scroll(&state.physics.scroll_physics, id_opt, sx, sy)
             })
         {
-            state.event_bus.push(UiEvent::PointerDown(clicked_btn));
+            state.runtime.event_bus.push(UiEvent::PointerDown(clicked_btn));
         } else {
-            state.event_bus.push(UiEvent::PointerDown(0));
+            state.runtime.event_bus.push(UiEvent::PointerDown(0));
         }
     }
 
     if motion_event.action() == MotionAction::Move {
-        state.last_drag_delta = (delta_x, delta_y);
+        state.input.last_drag_delta = (delta_x, delta_y);
         state
+            .input
             .drag_history
             .push_back((delta_x, delta_y, std::time::Instant::now()));
-        if state.drag_history.len() > 16 {
-            state.drag_history.pop_front();
+        if state.input.drag_history.len() > 16 {
+            state.input.drag_history.pop_front();
         }
 
-        let density = state.cached_density.0.max(1.0);
-        let total_dx = point.x - state.touch_start_pos.x;
-        let total_dy = point.y - state.touch_start_pos.y;
+        let density = state.layout.cached_density.0.max(1.0);
+        let total_dx = point.x - state.input.touch_start_pos.x;
+        let total_dy = point.y - state.input.touch_start_pos.y;
 
         // Disambiguate gesture axis once threshold is crossed
-        if state.gesture_axis == crate::app::state::GestureAxis::Undetermined {
+        if state.input.gesture_axis == crate::app::state::GestureAxis::Undetermined {
             if total_dx.abs() > 14.0 * density && total_dx.abs() > total_dy.abs() * 1.2 {
-                state.gesture_axis = crate::app::state::GestureAxis::Horizontal;
+                state.input.gesture_axis = crate::app::state::GestureAxis::Horizontal;
             } else if total_dy.abs() > 16.0 * density && total_dy.abs() > total_dx.abs() * 1.35 {
-                state.gesture_axis = crate::app::state::GestureAxis::Vertical;
+                state.input.gesture_axis = crate::app::state::GestureAxis::Vertical;
             }
         }
 
-        if state.active_scrollview_drag.is_none() {
+        if state.input.active_scrollview_drag.is_none() {
             if let Some((
                 sniffer_core::types::Element::ScrollView {
                     id, capture_drag, ..
@@ -106,18 +108,18 @@ pub fn handle_touch_move_or_down(
             )) = find_hovered_scrollview(root_element, layout_tree, point)
             {
                 if capture_drag.unwrap_or(true) {
-                    state.active_scrollview_drag = id
+                    state.input.active_scrollview_drag = id
                         .as_deref()
                         .map(|id_str| sniffer_core::ui::widget::fnv1a(id_str.as_bytes()));
                 }
             }
         }
 
-        if let Some(sv_id) = state.active_scrollview_drag {
-            let phys = state.scroll_physics.entry(sv_id).or_default();
+        if let Some(sv_id) = state.input.active_scrollview_drag {
+            let phys = state.physics.scroll_physics.entry(sv_id).or_default();
             if phys.snap_x.is_some() {
                 // If gesture is NOT locked to vertical, allow horizontal drag with 0 deadzone!
-                if state.gesture_axis != crate::app::state::GestureAxis::Vertical {
+                if state.input.gesture_axis != crate::app::state::GestureAxis::Vertical {
                     phys.apply_drag(delta_x);
                     phys.snap_target_x = None;
                     phys.is_dragging = true;
@@ -133,12 +135,12 @@ pub fn handle_touch_move_or_down(
     // Touchscreens do not support cursor hover. Suppress expensive recursive
     // layout tree hit-testing and avoid spamming QuickJS runtimes with 120Hz
     // UiEvent::Hover messages during touch moves.
-    if let Some(prev) = state.hovered_btn.take() {
-        state.event_bus.push(UiEvent::HoverEnd(prev));
+    if let Some(prev) = state.input.hovered_btn.take() {
+        state.runtime.event_bus.push(UiEvent::HoverEnd(prev));
     }
 
     #[cfg(feature = "devkit")]
-    let target_name = if let Some(sv_id) = state.active_scrollview_drag {
+    let target_name = if let Some(sv_id) = state.input.active_scrollview_drag {
         format!("sv_{sv_id:x}")
     } else {
         "None".to_string()
@@ -160,7 +162,7 @@ pub fn handle_touch_move_or_down(
         }
         .to_string();
 
-        if let Ok(mut prof) = state.profiler.lock() {
+        if let Ok(mut prof) = state.pacing.profiler.lock() {
             prof.touch_telemetry.active_pointers = pointer_count;
             prof.touch_telemetry.gesture = gesture_name;
             prof.touch_telemetry.target_element = target_name;

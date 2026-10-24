@@ -32,22 +32,22 @@ fn resolve_viewport_metrics(
             f32::from(u16::try_from(window.height()).expect("window height fits in u16")),
         )
     } else {
-        state.cached_screen_size
+        state.layout.cached_screen_size
     };
 
     if width < 1.0 || height < 1.0 {
         return None;
     }
 
-    let screen_changed = (width - state.cached_screen_size.0).abs() > 0.5
-        || (height - state.cached_screen_size.1).abs() > 0.5;
+    let screen_changed = (width - state.layout.cached_screen_size.0).abs() > 0.5
+        || (height - state.layout.cached_screen_size.1).abs() > 0.5;
 
     if screen_changed {
-        state.cached_screen_size = (width, height);
-        state.cached_density = crate::jni::get_density();
-        state.cached_safe_area = crate::jni::get_safe_area(app).map_or_else(
+        state.layout.cached_screen_size = (width, height);
+        state.layout.cached_density = crate::jni::get_density();
+        state.layout.cached_safe_area = crate::jni::get_safe_area(app).map_or_else(
             || {
-                let (density, _) = state.cached_density;
+                let (density, _) = state.layout.cached_density;
                 let fallback_top = (36.0 * density).round();
                 (fallback_top, 0.0)
             },
@@ -59,23 +59,23 @@ fn resolve_viewport_metrics(
             },
         );
 
-        state.cached_layout = None;
-        state.cached_max_scroll.clear();
-        state.last_indicator_page = None;
+        state.layout.cached_layout = None;
+        state.physics.cached_max_scroll.clear();
+        state.physics.last_indicator_page = None;
 
         sniffer_core::types::SCREEN_WIDTH
             .store(width.to_bits(), std::sync::atomic::Ordering::Relaxed);
         sniffer_core::types::SCREEN_HEIGHT
             .store(height.to_bits(), std::sync::atomic::Ordering::Relaxed);
 
-        state.plugin_registry.broadcast("dock.stateChanged", "{}");
-        state.plugin_registry.broadcast("dock.ready", "{}");
-        state.plugin_registry.broadcast("system.resized", "{}");
+        state.runtime.plugin_registry.broadcast("dock.stateChanged", "{}");
+        state.runtime.plugin_registry.broadcast("dock.ready", "{}");
+        state.runtime.plugin_registry.broadcast("system.resized", "{}");
 
         ui_changed = true;
     }
 
-    let (density, scaled_density) = state.cached_density;
+    let (density, scaled_density) = state.layout.cached_density;
     let metrics = ScreenMetrics::from_scale(width, height, density, scaled_density);
 
     Some(ViewportMetrics {
@@ -108,10 +108,10 @@ fn sync_ui_tree_and_virtualization(
     #[cfg(feature = "devkit")]
     let b0 = std::time::Instant::now();
     if ui_changed || is_first_frame {
-        if let Some(new_root) = state.plugin_registry.build_ui() {
+        if let Some(new_root) = state.runtime.plugin_registry.build_ui() {
             *root_element = new_root;
-            state.cached_root_element = Arc::new(root_element.clone());
-            state.layout_dirty = true;
+            state.layout.cached_root_element = Arc::new(root_element.clone());
+            state.layout.layout_dirty = true;
         }
     }
     #[cfg(feature = "devkit")]
@@ -125,11 +125,12 @@ fn sync_ui_tree_and_virtualization(
     let s0 = std::time::Instant::now();
     if ui_changed || screen_changed || is_first_frame {
         state
+            .layout
             .virtual_page_manager
             .on_viewport_resized(width, height, root_element);
-        state.virtual_page_manager.virtualize_tree(root_element);
-        physics_sync::sync_scroll_physics_from_tree(root_element, &mut state.scroll_physics);
-        state.transition_manager.sync_tree(root_element);
+        state.layout.virtual_page_manager.virtualize_tree(root_element);
+        physics_sync::sync_scroll_physics_from_tree(root_element, &mut state.physics.scroll_physics);
+        state.runtime.transition_manager.sync_tree(root_element);
     }
     #[cfg(feature = "devkit")]
     let t_sync = if ui_changed || screen_changed || is_first_frame {
@@ -137,7 +138,8 @@ fn sync_ui_tree_and_virtualization(
     } else {
         0.0_f32
     };
-    let is_animating = state.transition_manager.tick(dt) || state.transition_manager.is_animating();
+    let is_animating =
+        state.runtime.transition_manager.tick(dt) || state.runtime.transition_manager.is_animating();
 
     (
         is_animating,
@@ -164,13 +166,14 @@ fn calculate_and_sync_layout(
     height: f32,
     current_ui_version: u64,
 ) -> LayoutResult {
-    if let Some(ref cached) = state.cached_layout {
+    if let Some(ref cached) = state.layout.cached_layout {
         let cached_is_landscape = cached.rect.width > cached.rect.height;
         let window_is_landscape = width > height;
         if cached_is_landscape != window_is_landscape {
-            state.cached_layout = None;
-            state.layout_dirty = true;
+            state.layout.cached_layout = None;
+            state.layout.layout_dirty = true;
             state
+                .layout
                 .virtual_page_manager
                 .invalidate_on_resize(root_element);
         }
@@ -178,29 +181,29 @@ fn calculate_and_sync_layout(
 
     #[cfg(feature = "devkit")]
     let mut t_taffy = 0.0_f32;
-    let layout_recalculated = state.layout_dirty || state.cached_layout.is_none();
-    let layout_tree = if !state.layout_dirty
-        && let Some(ref cached) = state.cached_layout
+    let layout_recalculated = state.layout.layout_dirty || state.layout.cached_layout.is_none();
+    let layout_tree = if !state.layout.layout_dirty
+        && let Some(ref cached) = state.layout.cached_layout
     {
         cached.clone()
     } else {
         #[cfg(feature = "devkit")]
         let l0 = std::time::Instant::now();
-        state.last_ui_version = current_ui_version;
+        state.layout.last_ui_version = current_ui_version;
         let fresh = Arc::new(calculate_layout(
             root_element,
             Size::new(width, height),
             0.0,
             0.0,
         ));
-        super::state::update_max_scroll_cache(state, root_element, &fresh);
+        super::state::update_max_scroll_cache(&mut state.physics, root_element, &fresh);
         sniffer_core::physics::sync_max_scroll_from_layout(
             root_element,
             &fresh,
-            &mut state.scroll_physics,
+            &mut state.physics.scroll_physics,
         );
-        state.cached_layout = Some(fresh.clone());
-        state.layout_dirty = false;
+        state.layout.cached_layout = Some(fresh.clone());
+        state.layout.layout_dirty = false;
         #[cfg(feature = "devkit")]
         {
             t_taffy = l0.elapsed().as_secs_f32() * 1000.0;
@@ -234,18 +237,18 @@ fn step_physics_and_kinetics(
 ) -> PhysicsStepResult {
     let get_max_scroll = |target_id: Option<u64>| -> f32 {
         target_id
-            .and_then(|id| state.cached_max_scroll.get(&id).copied())
+            .and_then(|id| state.physics.cached_max_scroll.get(&id).copied())
             .unwrap_or(0.0)
     };
 
-    let kinetic_active = !state.kinetic_scrolls.is_empty();
-    state.kinetic_scrolls.retain_mut(|k| {
+    let kinetic_active = !state.physics.kinetic_scrolls.is_empty();
+    state.physics.kinetic_scrolls.retain_mut(|k| {
         if k.velocity_x.abs() > 0.5 || k.velocity_y.abs() > 0.5 {
             let (step_x, next_vx) =
                 sniffer_core::physics::step_momentum_decay(k.velocity_x, 7.62, dt);
             let (step_y, next_vy) =
                 sniffer_core::physics::step_momentum_decay(k.velocity_y, 3.6, dt);
-            state.event_bus.push(UiEvent::Scroll(
+            state.runtime.event_bus.push(UiEvent::Scroll(
                 Some(k.sv_id),
                 step_x,
                 step_y,
@@ -262,9 +265,9 @@ fn step_physics_and_kinetics(
 
     let mut scroll_offsets = std::collections::HashMap::new();
     let mut physics_active = false;
-    let phys_ids: Vec<u64> = state.scroll_physics.keys().copied().collect();
+    let phys_ids: Vec<u64> = state.physics.scroll_physics.keys().copied().collect();
     for sv_id in phys_ids {
-        if let Some(phys) = state.scroll_physics.get_mut(&sv_id) {
+        if let Some(phys) = state.physics.scroll_physics.get_mut(&sv_id) {
             let moved = phys.tick(dt);
             if moved || phys.is_dragging {
                 physics_active = true;
@@ -276,20 +279,20 @@ fn step_physics_and_kinetics(
                     let page_float = (phys.pos_x / snap_width).clamp(0.0, max_page as f32);
                     let clamped_page = page_float.round() as usize;
 
-                    let page_window_changed = state.virtual_page_manager.update_predicted_page(
+                    let page_window_changed = state.layout.virtual_page_manager.update_predicted_page(
                         clamped_page,
                         root_element,
                         phys.vel_x,
                     );
 
                     if page_window_changed {
-                        state.cached_layout = None;
+                        state.layout.cached_layout = None;
                     }
 
                     phys.last_snap_page = clamped_page as i32;
 
                     if phys.snap_just_completed && phys.on_snap.is_some() {
-                        state.event_bus.push(UiEvent::PageSnapped {
+                        state.runtime.event_bus.push(UiEvent::PageSnapped {
                             widget_id: sv_id,
                             page: clamped_page as i32,
                         });
@@ -306,11 +309,12 @@ fn step_physics_and_kinetics(
                         || phys.spring_sim_x.is_some()
                         || phys.snap_just_completed
                         || state
+                            .physics
                             .last_indicator_page
                             .is_none_or(|p| (p - target_page_float).abs() > 0.002);
 
                     if page_moved {
-                        state.last_indicator_page = Some(target_page_float);
+                        state.physics.last_indicator_page = Some(target_page_float);
                         physics_active = true;
                     }
                 }
@@ -328,16 +332,16 @@ fn step_physics_and_kinetics(
 }
 
 fn dispatch_events_and_actions(state: &AppState, app: &AndroidApp) -> bool {
-    let has_events = !state.event_bus.is_empty();
+    let has_events = !state.runtime.event_bus.is_empty();
 
-    state.plugin_registry.dispatch(
-        &state.event_bus,
-        &state.style_map,
-        &state.data_map,
-        &state.action_queue,
+    state.runtime.plugin_registry.dispatch(
+        &state.runtime.event_bus,
+        &state.runtime.style_map,
+        &state.runtime.data_map,
+        &state.runtime.action_queue,
     );
 
-    super::actions::process_android_actions(&state.action_queue, app);
+    super::actions::process_android_actions(&state.runtime.action_queue, app);
 
     has_events
 }
@@ -355,20 +359,20 @@ fn publish_render_snapshot_if_needed(
 ) {
     if needs_state_update {
         let layout_end = std::time::Instant::now();
-        state.render_state_version = state.render_state_version.wrapping_add(1);
+        state.pacing.render_state_version = state.pacing.render_state_version.wrapping_add(1);
         *shared_render_state.write().unwrap() = Arc::new(SharedRenderState {
-            root_element: Arc::clone(&state.cached_root_element),
+            root_element: Arc::clone(&state.layout.cached_root_element),
             layout_tree,
             metrics,
-            style_map: state.style_map.clone(),
-            data_map: state.data_map.clone(),
-            transition_manager: state.transition_manager.clone(),
+            style_map: state.runtime.style_map.clone(),
+            data_map: state.runtime.data_map.clone(),
+            transition_manager: state.runtime.transition_manager.clone(),
             shaders_warmed_up: current_warmed_up,
-            version: state.render_state_version,
+            version: state.pacing.render_state_version,
             frame_start,
             layout_end,
             scroll_offsets,
-            page_indicator_float: state.last_indicator_page,
+            page_indicator_float: state.physics.last_indicator_page,
         });
     }
 }
@@ -428,7 +432,7 @@ pub fn update_and_render_state(
     let current_warmed_up = shared_render_state.read().unwrap().shaders_warmed_up;
     let needs_state_update = viewport.ui_changed
         || viewport.screen_changed
-        || state.layout_dirty
+        || state.layout.layout_dirty
         || layout_res.layout_recalculated
         || is_animating
         || phys_res.kinetic_active

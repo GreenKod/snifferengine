@@ -49,22 +49,23 @@ pub fn poll_and_handle_events(
                     let _ = render_tx.send(RenderMessage::WindowResized(ptr, w, h));
                     (w, h)
                 } else {
-                    state.cached_screen_size
+                    state.layout.cached_screen_size
                 };
 
                 if width >= 1.0 && height >= 1.0 {
-                    state.event_bus.push(UiEvent::WindowResized(width, height));
+                    state.runtime.event_bus.push(UiEvent::WindowResized(width, height));
                 }
-                state.cached_layout = None;
-                state.cached_max_scroll.clear();
-                state.kinetic_scrolls.clear();
-                state.active_scrollview_drag = None;
-                for phys in state.scroll_physics.values_mut() {
+                state.layout.cached_layout = None;
+                state.physics.cached_max_scroll.clear();
+                state.physics.kinetic_scrolls.clear();
+                state.input.active_scrollview_drag = None;
+                for phys in state.physics.scroll_physics.values_mut() {
                     phys.vel_x = 0.0;
                     phys.vel_y = 0.0;
                     phys.snap_target_x = None;
                 }
                 state
+                    .layout
                     .virtual_page_manager
                     .invalidate_on_resize(root_element);
                 needs_redraw = true;
@@ -74,7 +75,7 @@ pub fn poll_and_handle_events(
                 if let Ok(mut iter) = app.input_events_iter() {
                     loop {
                         let had_event = iter.next(|input_event| {
-                            let layout_clone = if let Some(ref cached) = state.cached_layout {
+                            let layout_clone = if let Some(ref cached) = state.layout.cached_layout {
                                 cached.clone()
                             } else {
                                 // No layout yet — compute a best-effort one so hit-testing
@@ -115,12 +116,12 @@ pub fn poll_and_handle_events(
             }
             MainEvent::LowMemory => {
                 let _ = render_tx.send(RenderMessage::LowMemory);
-                state.cached_layout = None;
-                state.layout_dirty = true;
+                state.layout.cached_layout = None;
+                state.layout.layout_dirty = true;
             }
             MainEvent::Destroy => {
                 let _ = render_tx.send(RenderMessage::Destroy);
-                state.running = false;
+                state.pacing.running = false;
             }
             _ => {}
         },
