@@ -46,7 +46,7 @@ impl Default for Transition {
 }
 
 /// Defines affine transformations applied during rendering (does not affect Taffy layout).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Transform {
     pub scale: f32,
@@ -166,6 +166,17 @@ pub struct Style {
 
     pub transition: Transition,
     pub transform: Transform,
+    pub enter_from: Option<EnterFrom>,
+}
+
+/// Initial property values applied when an element mounts into the UI tree with an enter transition.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EnterFrom {
+    pub opacity: Option<f32>,
+    pub transform: Option<Transform>,
+    pub background_color: Option<u32>,
+    pub elevation: Option<f32>,
 }
 
 impl Default for Style {
@@ -216,6 +227,7 @@ impl Default for Style {
             backdrop_tint: None,
             transition: Transition::default(),
             transform: Transform::default(),
+            enter_from: None,
         }
     }
 }

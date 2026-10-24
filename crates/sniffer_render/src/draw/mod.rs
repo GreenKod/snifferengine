@@ -11,9 +11,11 @@ pub use culling::{
 use sniffer_core::ScreenMetrics;
 use sniffer_core::layout::LayoutNode;
 use sniffer_core::render::Renderer;
+use sniffer_core::style::Style;
 use sniffer_core::types::Element;
 use sniffer_core::ui::data_map::DataMap;
 use sniffer_core::ui::style_map::StyleMap;
+use std::borrow::Cow;
 
 /// Platform-agnostic traversal to draw the UI elements using the Renderer interface.
 #[allow(clippy::too_many_arguments)]
@@ -28,6 +30,38 @@ pub fn draw_ui(
     alpha_multiplier: f32,
     accumulated_scroll_x: f32,
     accumulated_scroll_y: f32,
+) -> usize {
+    draw_ui_with_physics(
+        renderer,
+        element,
+        layout,
+        metrics,
+        style_map,
+        data_map,
+        transition_manager,
+        alpha_multiplier,
+        accumulated_scroll_x,
+        accumulated_scroll_y,
+        None,
+        None,
+    )
+}
+
+/// Extended UI renderer supporting dynamic scroll offsets and indicator tracking without tree re-layout.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_ui_with_physics(
+    renderer: &mut dyn Renderer,
+    element: &Element,
+    layout: &LayoutNode,
+    metrics: &ScreenMetrics,
+    style_map: &StyleMap,
+    data_map: &DataMap,
+    transition_manager: &sniffer_core::anim::TransitionManager,
+    alpha_multiplier: f32,
+    accumulated_scroll_x: f32,
+    accumulated_scroll_y: f32,
+    scroll_offsets: Option<&std::collections::HashMap<u64, (f32, f32)>>,
+    page_indicator_float: Option<f32>,
 ) -> usize {
     let is_animating = transition_manager.states.values().any(|s| s.is_active);
     let count = draw_ui_node(
@@ -44,6 +78,8 @@ pub fn draw_ui(
         0.0,
         0.0,
         is_animating,
+        scroll_offsets,
+        page_indicator_float,
     );
     renderer.flush();
     count
@@ -65,6 +101,8 @@ pub(crate) fn draw_ui_node(
     accumulated_tx: f32,
     accumulated_ty: f32,
     is_animating: bool,
+    scroll_offsets: Option<&std::collections::HashMap<u64, (f32, f32)>>,
+    page_indicator_float: Option<f32>,
 ) -> usize {
     use sniffer_core::ui::data_map::DataValue;
     use sniffer_core::ui::data_map::DrawCommand;
@@ -74,18 +112,19 @@ pub(crate) fn draw_ui_node(
         .id()
         .map(|id_str| sniffer_core::ui::widget::fnv1a(id_str.as_bytes()));
 
-    let mut base_style = element.style().clone();
-    if let Some(id_str) = element.id()
-        && let Some(anim_style) = transition_manager.get_current_style(id_str)
-    {
-        base_style = anim_style.clone();
-    }
+    let raw_style = element.style();
+    let anim_style = element
+        .id()
+        .and_then(|id_str| transition_manager.get_current_style(id_str));
+    let base_style_ref = anim_style.unwrap_or(raw_style);
 
-    if let Some(id) = widget_id
+    let base_style: Cow<'_, Style> = if let Some(id) = widget_id
         && let Some(override_style) = style_map.get(id)
     {
-        base_style = override_style.apply(base_style);
-    }
+        Cow::Owned(override_style.apply(base_style_ref.clone()))
+    } else {
+        Cow::Borrowed(base_style_ref)
+    };
 
     let final_alpha = alpha_multiplier * base_style.opacity.clamp(0.0, 1.0);
     if final_alpha < 0.005 {
@@ -126,21 +165,33 @@ pub(crate) fn draw_ui_node(
         return 0;
     }
 
-    let has_transform = (base_style.transform.scale - 1.0).abs() >= 1e-4
-        || base_style.transform.rotate.abs() >= 1e-4
-        || tx.abs() >= 1e-4
-        || ty.abs() >= 1e-4;
+    let has_matrix_transform = (base_style.transform.scale - 1.0).abs() >= 1e-4
+        || base_style.transform.rotate.abs() >= 1e-4;
 
-    if has_transform {
+    let (rect, pass_tx, pass_ty) = if has_matrix_transform {
+        let center_x = rect.x + total_tx + rect.width / 2.0;
+        let center_y = rect.y + total_ty + rect.height / 2.0;
         renderer.push_transform(
-            rect.x + rect.width / 2.0,
-            rect.y + rect.height / 2.0,
+            center_x,
+            center_y,
             base_style.transform.scale,
             base_style.transform.rotate,
-            tx,
-            ty,
+            0.0,
+            0.0,
         );
-    }
+        (rect, 0.0, 0.0)
+    } else {
+        (
+            sniffer_core::Rect::new(
+                rect.x + total_tx,
+                rect.y + total_ty,
+                rect.width,
+                rect.height,
+            ),
+            total_tx,
+            total_ty,
+        )
+    };
 
     let alpha_changed = (final_alpha - alpha_multiplier).abs() >= 1e-4;
     if alpha_changed {
@@ -335,12 +386,14 @@ pub(crate) fn draw_ui_node(
         final_alpha,
         accumulated_scroll_x,
         accumulated_scroll_y,
-        total_tx,
-        total_ty,
+        pass_tx,
+        pass_ty,
         &base_style,
         rect,
         widget_id,
         is_animating,
+        scroll_offsets,
+        page_indicator_float,
     );
 
     if base_style.overflow_hidden {
@@ -350,7 +403,7 @@ pub(crate) fn draw_ui_node(
     if alpha_changed {
         renderer.set_global_alpha(alpha_multiplier);
     }
-    if has_transform {
+    if has_matrix_transform {
         renderer.pop_transform();
     }
 

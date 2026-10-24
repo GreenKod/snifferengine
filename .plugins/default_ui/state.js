@@ -58,19 +58,25 @@ let state = {
     // 2-Floor Architecture State: "top" = Home Screen, "bottom" = App Drawer
     currentFloor: "top",
     drawerSearchQuery: "",
+    isDrawerMounted: false,
+    _drawerCloseTimer: null,
     showDevKitHud: typeof host_is_devkit_enabled === "function" && host_is_devkit_enabled(),
 
     allApps: loadInitialApps(),
+    _cachedAlphabeticalApps: null,
 
     // Alphabetical apps list (A-Z) for the Bottom Floor (App Drawer)
     get alphabeticalApps() {
-        const list = this.allApps.slice();
-        list.sort(function(a, b) {
-            const nameA = (a.name || "").toLowerCase();
-            const nameB = (b.name || "").toLowerCase();
-            return nameA.localeCompare(nameB);
-        });
-        return list;
+        if (!this._cachedAlphabeticalApps) {
+            const list = this.allApps.slice();
+            list.sort(function(a, b) {
+                const nameA = a.name || "";
+                const nameB = b.name || "";
+                return nameA.localeCompare(nameB, "tr", { sensitivity: "base" });
+            });
+            this._cachedAlphabeticalApps = list;
+        }
+        return this._cachedAlphabeticalApps;
     },
 
     // Filtered apps in App Drawer based on drawerSearchQuery
@@ -97,10 +103,28 @@ let state = {
             if (typeof SnifferUI !== "undefined" && typeof SnifferUI.forceUpdate === "function") {
                 SnifferUI.forceUpdate();
             }
+            if (this._drawerCloseTimer) {
+                clearTimeout(this._drawerCloseTimer);
+            }
+            const self = this;
+            this._drawerCloseTimer = setTimeout(function() {
+                if (self.currentFloor === "top") {
+                    self.isDrawerMounted = false;
+                    if (typeof SnifferUI !== "undefined" && typeof SnifferUI.forceUpdate === "function") {
+                        SnifferUI.forceUpdate();
+                    }
+                }
+                self._drawerCloseTimer = null;
+            }, 400);
         }
     },
 
     goToBottomFloor() {
+        if (this._drawerCloseTimer) {
+            clearTimeout(this._drawerCloseTimer);
+            this._drawerCloseTimer = null;
+        }
+        this.isDrawerMounted = true;
         if (this.currentFloor !== "bottom") {
             this.currentFloor = "bottom";
             this.rebuildCardHashCache();
@@ -183,6 +207,7 @@ let state = {
     refreshApps() {
         if (typeof _dragCacheGrids !== 'undefined') _dragCacheGrids = null;
         this._cardHashToAppPackage = null;
+        this._cachedAlphabeticalApps = null;
         this.allApps = loadInitialApps();
     },
 

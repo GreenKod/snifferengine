@@ -33,7 +33,7 @@ To maintain code quality, stability, and security, all contributors must adhere 
 
 ```bash
 # Run the desktop preview environment
-cargo run --bin snifferlauncher_desktop
+cargo run --bin snifferlauncher-desktop
 ```
 
 ---

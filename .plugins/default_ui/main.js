@@ -96,8 +96,8 @@ function Root() {
 
     const rootChildren = [homeScreen];
 
-    // Floor 2: App Drawer Layer as animated overlay
-    if (typeof AppDrawerComponent === "function") {
+    // Floor 2: App Drawer Layer as animated overlay (mounted only when active or closing)
+    if (state.isDrawerMounted && typeof AppDrawerComponent === "function") {
         rootChildren.push(AppDrawerComponent());
     }
 
@@ -333,7 +333,7 @@ SnifferUI.start(Root, state);
 if (typeof setInterval === "function") {
     setInterval(function() {
         if (state.showDevKitHud) {
-            SnifferUI.forceUpdate(true);
+            SnifferUI.forceUpdate();
         }
-    }, 500);
+    }, 1000);
 }

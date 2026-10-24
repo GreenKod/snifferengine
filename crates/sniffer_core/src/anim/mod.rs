@@ -1,8 +1,7 @@
 pub mod spring;
-pub use spring::{SpringConfig, SpringSimulation};
-
 use crate::style::{Easing, Style};
-use std::collections::HashMap;
+pub use spring::{SpringConfig, SpringSimulation};
+use std::collections::{HashMap, HashSet};
 
 /// Interpolates between two f32 values based on t (0.0 to 1.0).
 #[must_use]
@@ -302,12 +301,20 @@ pub fn has_animatable_difference(a: &Style, b: &Style) -> bool {
 #[derive(Default, Clone)]
 pub struct TransitionManager {
     pub states: HashMap<String, AnimState>,
+    pub last_synced_ids: HashSet<String>,
 }
 
 impl TransitionManager {
     /// Syncs the manager with a new target style for a given element ID.
     pub fn update_target(&mut self, id: &str, new_style: &Style) {
-        if let Some(state) = self.states.get_mut(id) {
+        let was_present = self.states.contains_key(id);
+        self.last_synced_ids.insert(id.to_string());
+        self.update_target_with_presence(id, new_style, was_present);
+    }
+
+    /// Internal update handling whether the element was already present in the active tree.
+    pub fn update_target_with_presence(&mut self, id: &str, new_style: &Style, was_present: bool) {
+        if was_present && let Some(state) = self.states.get_mut(id) {
             // Only trigger transition if properties we care about actually changed.
             if state.target_style != *new_style {
                 let trans = &new_style.transition;
@@ -330,6 +337,54 @@ impl TransitionManager {
                     state.is_active = false;
                 }
             }
+        } else if let Some(ref enter) = new_style.enter_from {
+            // Newly mounted element entering the tree with an enter transition!
+            let mut start_style = new_style.clone();
+            if let Some(op) = enter.opacity {
+                start_style.opacity = op;
+            }
+            if let Some(ref tr) = enter.transform {
+                start_style.transform = *tr;
+            }
+            if let Some(bg) = enter.background_color {
+                start_style.background_color = Some(bg);
+            }
+            if let Some(el) = enter.elevation {
+                start_style.elevation = el;
+            }
+
+            let trans = &new_style.transition;
+            let effective_delay = trans
+                .delay
+                .mul_add(1.0, (trans.stagger_index as f32) * trans.stagger_interval);
+            let has_transition = trans.duration > 0.0
+                || effective_delay > 0.0
+                || matches!(trans.easing, Easing::Spring { .. });
+
+            if has_transition && has_animatable_difference(&start_style, new_style) {
+                self.states.insert(
+                    id.to_string(),
+                    AnimState {
+                        start_style: start_style.clone(),
+                        target_style: new_style.clone(),
+                        current_style: start_style,
+                        time_elapsed: 0.0,
+                        is_active: true,
+                    },
+                );
+            } else {
+                let s = new_style.clone();
+                self.states.insert(
+                    id.to_string(),
+                    AnimState {
+                        start_style: s.clone(),
+                        target_style: s.clone(),
+                        current_style: s,
+                        time_elapsed: 0.0,
+                        is_active: false,
+                    },
+                );
+            }
         } else {
             let s = new_style.clone();
             self.states.insert(
@@ -347,14 +402,28 @@ impl TransitionManager {
 
     /// Recursively walks the UI element tree and updates the animation target for every element with an ID.
     pub fn sync_tree(&mut self, element: &crate::types::Element) {
+        let mut current_ids = HashSet::new();
+        self.sync_tree_recursive(element, &mut current_ids);
+        self.states.retain(|id, _| current_ids.contains(id));
+        self.last_synced_ids = current_ids;
+    }
+
+    fn sync_tree_recursive(
+        &mut self,
+        element: &crate::types::Element,
+        current_ids: &mut HashSet<String>,
+    ) {
         if let Some(id) = element.id() {
-            self.update_target(id, element.style());
+            current_ids.insert(id.to_string());
+            let was_present = self.last_synced_ids.contains(id);
+            self.update_target_with_presence(id, element.style(), was_present);
         }
         match element {
             crate::types::Element::Container { children, .. }
-            | crate::types::Element::ScrollView { children, .. } => {
+            | crate::types::Element::ScrollView { children, .. }
+            | crate::types::Element::SharedView { children, .. } => {
                 for child in children {
-                    self.sync_tree(child);
+                    self.sync_tree_recursive(child, current_ids);
                 }
             }
             _ => {}

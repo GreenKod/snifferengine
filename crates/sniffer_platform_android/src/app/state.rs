@@ -62,6 +62,7 @@ pub struct AppState {
     pub last_interaction_time: std::time::Instant,
     pub last_tick_time: std::time::Instant,
     pub last_indicator_page: Option<f32>,
+    pub cached_root_element: Arc<sniffer_core::types::Element>,
 }
 
 impl AppState {
@@ -148,6 +149,11 @@ impl AppState {
             last_interaction_time,
             last_tick_time: std::time::Instant::now(),
             last_indicator_page: None,
+            cached_root_element: Arc::new(sniffer_core::types::Element::Container {
+                id: None,
+                style: sniffer_core::style::Style::default(),
+                children: Vec::new(),
+            }),
         }
     }
 

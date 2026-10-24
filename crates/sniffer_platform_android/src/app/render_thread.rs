@@ -4,7 +4,7 @@ use android_activity::AndroidApp;
 use obfstr::obfstr;
 use sniffer_core::{Action, Renderer, dev_err, dev_log};
 use sniffer_pkg::PackageRegistry;
-use sniffer_render::draw::draw_ui;
+use sniffer_render::draw::draw_ui_with_physics;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -277,7 +277,7 @@ pub fn spawn_render_thread(
                     renderer.draw_wallpaper(width, height);
 
                     #[allow(unused_variables)]
-                    let rendered_nodes = draw_ui(
+                    let rendered_nodes = draw_ui_with_physics(
                         renderer,
                         &current_state.root_element,
                         &current_state.layout_tree,
@@ -288,12 +288,18 @@ pub fn spawn_render_thread(
                         1.0,
                         0.0,
                         0.0,
+                        Some(&current_state.scroll_offsets),
+                        current_state.page_indicator_float,
                     );
 
-                    let mut layout_rects = std::collections::HashMap::new();
-                    collect_layout_rects(&current_state.layout_tree, &mut layout_rects);
-                    if let Ok(mut reg) = pkg_registry.write() {
-                        reg.render_widgets(renderer, &layout_rects, None);
+                    let has_widgets = pkg_registry.read().is_ok_and(|reg| reg.has_widgets());
+
+                    if has_widgets {
+                        let mut layout_rects = std::collections::HashMap::new();
+                        collect_layout_rects(&current_state.layout_tree, &mut layout_rects);
+                        if let Ok(mut reg) = pkg_registry.write() {
+                            reg.render_widgets(renderer, &layout_rects, None);
+                        }
                     }
 
                     #[cfg(feature = "devkit")]

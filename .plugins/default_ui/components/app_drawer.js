@@ -45,11 +45,18 @@ function AppDrawerCardComponent(app, index, isLandscape, isBottomFloor) {
             translate_y: cardTranslateY,
             scale: 1.0,
         },
+        enter_from: {
+            opacity: 0.0,
+            transform: {
+                translate_y: vh(6.0),
+                scale: 1.0,
+            }
+        },
         transition: {
             duration: 0.35,
-            easing: { spring: { stiffness: 240, damping: 22 } },
-            stagger_index: index % 24,
-            stagger_interval: 0.018,
+            easing: { spring: { stiffness: 280, damping: 24 } },
+            stagger_index: Math.min(index, 24),
+            stagger_interval: 0.015,
         },
     }, [
         Container("drawer_icon_" + index, {
@@ -233,7 +240,9 @@ function AppDrawerComponent() {
         left: px(0),
         width: pct(100),
         height: pct(100),
-        background_gradient: [hex("#B80A0E18"), hex("#D405070D")],
+        background_color: hex("#880A0E17"),
+        backdrop_blur: 32.0,
+        backdrop_tint: hex("#880A0E17"),
         flex_direction: "Column",
         justify_content: "Start",
         align_items: "Stretch",
@@ -241,6 +250,13 @@ function AppDrawerComponent() {
         transform: {
             translate_y: isBottomFloor ? 0.0 : vh(100.0),
             scale: 1.0,
+        },
+        enter_from: {
+            opacity: 0.0,
+            transform: {
+                translate_y: vh(100.0),
+                scale: 1.0,
+            }
         },
         transition: {
             duration: 0.36,

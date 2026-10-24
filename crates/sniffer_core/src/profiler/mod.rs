@@ -25,9 +25,32 @@ pub struct FramePhaseMetrics {
     /// Time spent on render thread drawing UI elements, Kawase blur passes, and batch buffers.
     pub render_draw_ms: f32,
     /// Time spent in `eglSwapBuffers` waiting for hardware display VSync.
+    ///
+    /// This is *waiting*, not work: a frame that finishes early legitimately blocks
+    /// here until the next VSync. It is therefore never used to decide whether a
+    /// frame janked, only to attribute a missed VSync that no work phase explains.
     pub swap_vsync_ms: f32,
-    /// Total end-to-end frame duration from user input to display presentation.
+    /// Total end-to-end frame latency from main-thread frame start to presentation.
+    ///
+    /// Includes queue and swap waiting, so it measures *latency*, not *pacing*.
     pub total_frame_ms: f32,
+}
+
+impl FramePhaseMetrics {
+    /// Pure work latency from input to completion of draw (excluding blocking VSync wait in eglSwapBuffers).
+    #[must_use]
+    pub fn work_latency_ms(&self) -> f32 {
+        self.layout_and_physics_ms + self.queue_latency_ms + self.render_draw_ms
+    }
+
+    /// Pure work time of the busiest thread (main-thread layout or render-thread draw).
+    ///
+    /// Main and render threads run in parallel (pipelined), so each one individually
+    /// must fit in one VSync period; their sum does not need to.
+    #[must_use]
+    pub const fn busiest_thread_work_ms(&self) -> f32 {
+        self.layout_and_physics_ms.max(self.render_draw_ms)
+    }
 }
 
 /// Identifies the primary bottleneck phase responsible for a frame deadline overrun.
@@ -65,10 +88,24 @@ pub struct JankEvent {
     pub bottleneck: JankBottleneck,
     pub bottleneck_ms: f32,
     pub phases: FramePhaseMetrics,
+    /// Number of VSync periods skipped between the previous and this presentation
+    /// (0 when only a per-thread work overrun was detected).
+    pub missed_vsyncs: u32,
+    /// Measured present-to-present interval in milliseconds, if known.
+    pub present_interval_ms: Option<f32>,
     pub timestamp: Instant,
 }
 
-/// Real-time frame pacing watchdog that measures execution deadlines and flags frame hitches.
+/// Real-time frame pacing watchdog that flags frame hitches.
+///
+/// A frame is considered janky when either:
+/// 1. **Missed VSync** – the present-to-present interval spans more than one
+///    VSync period while frames were being produced continuously, or
+/// 2. **Thread overrun** – the busiest thread's pure work (layout or draw)
+///    exceeds one period plus tolerance.
+///
+/// Time spent blocked in `eglSwapBuffers` is *not* work and never triggers jank
+/// by itself.
 #[derive(Clone, Debug)]
 pub struct JankWatchdog {
     refresh_rate: f32,
@@ -78,6 +115,10 @@ pub struct JankWatchdog {
     last_jank_event: Option<JankEvent>,
     jank_history: VecDeque<JankEvent>,
     max_history: usize,
+    last_present: Option<Instant>,
+    missed_vsync_total: u64,
+    hitch_time_ms_total: f32,
+    paced_time_ms_total: f32,
 }
 
 impl Default for JankWatchdog {
@@ -102,6 +143,10 @@ impl JankWatchdog {
             last_jank_event: None,
             jank_history: VecDeque::with_capacity(32),
             max_history: 32,
+            last_present: None,
+            missed_vsync_total: 0,
+            hitch_time_ms_total: 0.0,
+            paced_time_ms_total: 0.0,
         }
     }
 
@@ -136,73 +181,183 @@ impl JankWatchdog {
         self.target_budget_ms() + self.tolerance_ms
     }
 
-    /// Evaluates a completed frame against the hardware display deadline.
-    /// Returns `Some(JankEvent)` if a deadline overrun was detected.
+    /// Evaluates a frame using only its phase timings (no presentation timestamp).
+    ///
+    /// Only per-thread work overruns can be detected here; use
+    /// [`Self::evaluate_presented_frame`] to also detect missed VSyncs.
     pub fn evaluate_frame(
         &mut self,
         frame_number: u64,
         phases: FramePhaseMetrics,
     ) -> Option<JankEvent> {
+        self.classify(frame_number, phases, 0, None)
+    }
+
+    /// Evaluates a frame using its phase timings **and** its presentation timestamp.
+    ///
+    /// * `frame_start` – when the main thread started producing this frame.
+    /// * `present` – when the frame was handed to the display (`eglSwapBuffers` return).
+    ///
+    /// The present-to-present interval is only judged when frames are produced
+    /// continuously (this frame's work started no later than one period after the
+    /// previous presentation). Gaps caused by intentional idling are ignored.
+    pub fn evaluate_presented_frame(
+        &mut self,
+        frame_number: u64,
+        phases: FramePhaseMetrics,
+        frame_start: Instant,
+        present: Instant,
+    ) -> Option<JankEvent> {
+        let period_ms = self.target_budget_ms();
+        let mut missed_vsyncs = 0;
+        let mut present_interval_ms = None;
+
+        if let Some(prev_present) = self.last_present {
+            let idle_gap_ms = frame_start
+                .saturating_duration_since(prev_present)
+                .as_secs_f32()
+                * 1000.0;
+            let is_continuous = idle_gap_ms <= period_ms;
+
+            if is_continuous {
+                let interval_ms = present
+                    .saturating_duration_since(prev_present)
+                    .as_secs_f32()
+                    * 1000.0;
+                missed_vsyncs = Self::missed_vsyncs_for_interval(interval_ms, period_ms);
+
+                self.paced_time_ms_total += interval_ms;
+                #[allow(clippy::cast_precision_loss)]
+                {
+                    self.hitch_time_ms_total += missed_vsyncs as f32 * period_ms;
+                }
+                self.missed_vsync_total = self
+                    .missed_vsync_total
+                    .wrapping_add(u64::from(missed_vsyncs));
+                present_interval_ms = Some(interval_ms);
+            }
+        }
+        self.last_present = Some(present);
+
+        self.classify(frame_number, phases, missed_vsyncs, present_interval_ms)
+    }
+
+    /// Records a presentation that is not evaluated (e.g. a redraw caused only by a
+    /// texture upload) so the next evaluated frame measures its interval from the
+    /// correct previous VSync instead of reporting a phantom miss.
+    pub const fn note_present(&mut self, present: Instant) {
+        self.last_present = Some(present);
+    }
+
+    /// Converts a present-to-present interval into the number of skipped VSyncs.
+    ///
+    /// The interval is rounded to the nearest whole number of periods so that
+    /// normal timestamp jitter (e.g. 18ms at 60Hz) is not reported as a miss.
+    #[must_use]
+    pub fn missed_vsyncs_for_interval(interval_ms: f32, period_ms: f32) -> u32 {
+        if period_ms <= 0.0 || !interval_ms.is_finite() || interval_ms <= 0.0 {
+            return 0;
+        }
+        let periods = (interval_ms / period_ms).round().clamp(0.0, 1000.0);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let periods = periods as u32;
+        periods.saturating_sub(1)
+    }
+
+    fn classify(
+        &mut self,
+        frame_number: u64,
+        phases: FramePhaseMetrics,
+        missed_vsyncs: u32,
+        present_interval_ms: Option<f32>,
+    ) -> Option<JankEvent> {
         self.total_active_frames = self.total_active_frames.wrapping_add(1);
         let budget_ms = self.target_budget_ms();
         let deadline = budget_ms + self.tolerance_ms;
+        let thread_work_ms = phases.busiest_thread_work_ms();
+        let thread_overrun =
+            phases.layout_and_physics_ms > deadline || phases.render_draw_ms > deadline;
+        let swap_stall = phases.swap_vsync_ms > budget_ms * 1.8;
 
-        if phases.total_frame_ms > deadline {
-            self.jank_frame_count = self.jank_frame_count.wrapping_add(1);
-            let overrun_ms = phases.total_frame_ms - budget_ms;
+        if missed_vsyncs == 0 && !thread_overrun && !swap_stall {
+            return None;
+        }
 
-            // Determine the primary culprit phase
-            let mut bottleneck = JankBottleneck::LayoutAndPhysics;
-            let mut bottleneck_ms = phases.layout_and_physics_ms;
-
-            if phases.queue_latency_ms > bottleneck_ms {
-                bottleneck = JankBottleneck::QueueLatency;
-                bottleneck_ms = phases.queue_latency_ms;
-            }
-            if phases.render_draw_ms > bottleneck_ms {
-                bottleneck = JankBottleneck::RenderDraw;
-                bottleneck_ms = phases.render_draw_ms;
-            }
-            if phases.swap_vsync_ms > bottleneck_ms {
-                bottleneck = JankBottleneck::VsyncOrDriver;
-                bottleneck_ms = phases.swap_vsync_ms;
-            }
-
-            let event = JankEvent {
-                frame_number,
-                total_ms: phases.total_frame_ms,
-                budget_ms,
-                overrun_ms,
-                refresh_rate: self.refresh_rate,
-                bottleneck,
-                bottleneck_ms,
-                phases,
-                timestamp: Instant::now(),
-            };
-
-            crate::dev_warn!(
-                "[JANK WATCHDOG] ⚠️ Frame #{} delayed by +{:.1}ms! Total: {:.2}ms (Budget: {:.2}ms @ {:.0}Hz) | Primary bottleneck: {} ({:.2}ms) [Layout: {:.1}ms, Queue: {:.1}ms, Draw: {:.1}ms, Swap: {:.1}ms]",
-                event.frame_number,
-                event.overrun_ms,
-                event.total_ms,
-                event.budget_ms,
-                event.refresh_rate,
-                event.bottleneck,
-                event.bottleneck_ms,
-                event.phases.layout_and_physics_ms,
-                event.phases.queue_latency_ms,
-                event.phases.render_draw_ms,
-                event.phases.swap_vsync_ms
-            );
-
-            if self.jank_history.len() >= self.max_history {
-                self.jank_history.pop_front();
-            }
-            self.jank_history.push_back(event.clone());
-            self.last_jank_event = Some(event.clone());
-            Some(event)
+        self.jank_frame_count = self.jank_frame_count.wrapping_add(1);
+        let (bottleneck, bottleneck_ms) = Self::attribute(&phases, budget_ms);
+        #[allow(clippy::cast_precision_loss)]
+        let overrun_ms = if missed_vsyncs > 0 {
+            missed_vsyncs as f32 * budget_ms
+        } else if swap_stall {
+            phases.swap_vsync_ms - budget_ms
         } else {
-            None
+            thread_work_ms - budget_ms
+        };
+
+        let event = JankEvent {
+            frame_number,
+            total_ms: phases.total_frame_ms,
+            budget_ms,
+            overrun_ms,
+            refresh_rate: self.refresh_rate,
+            bottleneck,
+            bottleneck_ms,
+            phases,
+            missed_vsyncs,
+            present_interval_ms,
+            timestamp: Instant::now(),
+        };
+
+        crate::dev_warn!(
+            "[JANK WATCHDOG] ⚠️ Frame #{} missed {} vsync(s), +{:.1}ms (interval: {}, budget: {:.2}ms @ {:.0}Hz) | Bottleneck: {} ({:.2}ms) | Work [Layout: {:.1}ms, Draw: {:.1}ms] Wait [Queue: {:.1}ms, Swap: {:.1}ms] Latency: {:.1}ms",
+            event.frame_number,
+            event.missed_vsyncs,
+            event.overrun_ms,
+            event
+                .present_interval_ms
+                .map_or_else(|| "n/a".to_string(), |v| format!("{v:.1}ms")),
+            event.budget_ms,
+            event.refresh_rate,
+            event.bottleneck,
+            event.bottleneck_ms,
+            event.phases.layout_and_physics_ms,
+            event.phases.render_draw_ms,
+            event.phases.queue_latency_ms,
+            event.phases.swap_vsync_ms,
+            event.total_ms
+        );
+
+        if self.jank_history.len() >= self.max_history {
+            self.jank_history.pop_front();
+        }
+        self.jank_history.push_back(event.clone());
+        self.last_jank_event = Some(event.clone());
+        Some(event)
+    }
+
+    /// Picks the phase responsible for a janky frame.
+    ///
+    /// Work phases are blamed first. Queue latency is blamed when the render thread
+    /// was still busy with the previous frame (pipeline backpressure). Only when
+    /// neither explains the miss is it attributed to VSync / compositor / driver.
+    fn attribute(phases: &FramePhaseMetrics, budget_ms: f32) -> (JankBottleneck, f32) {
+        let layout = phases.layout_and_physics_ms;
+        let draw = phases.render_draw_ms;
+        let queue = phases.queue_latency_ms;
+        let swap = phases.swap_vsync_ms;
+
+        if draw > budget_ms && draw >= layout {
+            (JankBottleneck::RenderDraw, draw)
+        } else if layout > budget_ms {
+            (JankBottleneck::LayoutAndPhysics, layout)
+        } else if queue > budget_ms * 1.2 && queue >= draw && queue >= layout {
+            (JankBottleneck::QueueLatency, queue)
+        } else if swap > budget_ms * 1.8 {
+            (JankBottleneck::VsyncOrDriver, swap)
+        } else if draw >= layout {
+            (JankBottleneck::RenderDraw, draw)
+        } else {
+            (JankBottleneck::LayoutAndPhysics, layout)
         }
     }
 
@@ -242,6 +397,23 @@ impl JankWatchdog {
     #[must_use]
     pub fn jank_count(&self) -> u64 {
         self.jank_frame_count
+    }
+
+    /// Returns the total number of VSync periods skipped during continuous rendering.
+    #[must_use]
+    pub const fn missed_vsync_count(&self) -> u64 {
+        self.missed_vsync_total
+    }
+
+    /// Returns the hitch time ratio in milliseconds of delay per second of
+    /// continuous rendering (Apple's metric: < 5 good, 5–10 warning, > 10 critical).
+    #[must_use]
+    pub fn hitch_time_ratio_ms_per_s(&self) -> f32 {
+        if self.paced_time_ms_total <= 0.0 {
+            0.0
+        } else {
+            self.hitch_time_ms_total / (self.paced_time_ms_total / 1000.0)
+        }
     }
 }
 
@@ -304,7 +476,8 @@ impl FrameProfiler {
             total_frame_ms,
         };
 
-        self.watchdog.evaluate_frame(frame_number, phases);
+        self.watchdog
+            .evaluate_presented_frame(frame_number, phases, frame_start, swap_end);
 
         let push_limit = |vec: &mut VecDeque<f32>, val: f32, limit: usize| {
             if vec.len() >= limit {
@@ -438,7 +611,8 @@ impl FrameProfiler {
             total_frame_ms,
         };
 
-        self.watchdog.evaluate_frame(frame_number, phases);
+        self.watchdog
+            .evaluate_presented_frame(frame_number, phases, frame_start, swap_end);
     }
 
     #[inline]
@@ -785,11 +959,11 @@ mod tests {
     fn test_jank_watchdog_detects_layout_bottleneck() {
         let mut watchdog = JankWatchdog::new(90.0, 2.0);
         let phases = FramePhaseMetrics {
-            layout_and_physics_ms: 12.0,
+            layout_and_physics_ms: 14.0,
             queue_latency_ms: 0.5,
             render_draw_ms: 2.0,
             swap_vsync_ms: 3.5,
-            total_frame_ms: 18.0,
+            total_frame_ms: 20.0,
         };
 
         let jank = watchdog.evaluate_frame(2, phases);
@@ -797,7 +971,7 @@ mod tests {
         let event = jank.unwrap();
         assert_eq!(event.frame_number, 2);
         assert_eq!(event.bottleneck, JankBottleneck::LayoutAndPhysics);
-        assert_eq!(event.bottleneck_ms, 12.0);
+        assert_eq!(event.bottleneck_ms, 14.0);
         assert!(event.overrun_ms > 0.0);
         assert_eq!(watchdog.jank_count(), 1);
         assert_eq!(watchdog.jank_percentage(), 100.0);
@@ -810,15 +984,33 @@ mod tests {
         let phases = FramePhaseMetrics {
             layout_and_physics_ms: 1.0,
             queue_latency_ms: 0.5,
-            render_draw_ms: 18.0,
+            render_draw_ms: 19.5,
             swap_vsync_ms: 4.0,
-            total_frame_ms: 23.5,
+            total_frame_ms: 25.0,
         };
 
         let jank = watchdog.evaluate_frame(3, phases);
         assert!(jank.is_some());
         let event = jank.unwrap();
         assert_eq!(event.bottleneck, JankBottleneck::RenderDraw);
-        assert_eq!(event.bottleneck_ms, 18.0);
+        assert_eq!(event.bottleneck_ms, 19.5);
+    }
+
+    #[test]
+    fn test_jank_watchdog_pipelined_queue_wait_not_jank() {
+        let mut watchdog = JankWatchdog::new(60.0, 2.0);
+        let phases = FramePhaseMetrics {
+            layout_and_physics_ms: 0.5,
+            queue_latency_ms: 16.0,
+            render_draw_ms: 6.0,
+            swap_vsync_ms: 9.0,
+            total_frame_ms: 31.5,
+        };
+
+        let jank = watchdog.classify(10, phases, 0, Some(16.4));
+        assert!(
+            jank.is_none(),
+            "Normal pipelined queue wait with 0 missed VSyncs must not be flagged as jank"
+        );
     }
 }

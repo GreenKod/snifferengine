@@ -75,22 +75,38 @@ pub fn update_and_render_state(
 
     let is_first_frame =
         matches!(root_element, Element::Container { children, .. } if children.is_empty());
+    #[cfg(feature = "devkit")]
+    let b0 = std::time::Instant::now();
     if ui_changed || is_first_frame {
         if let Some(new_root) = state.plugin_registry.build_ui() {
             *root_element = new_root;
+            state.cached_root_element = Arc::new(root_element.clone());
             state.layout_dirty = true;
         }
     }
+    #[cfg(feature = "devkit")]
+    let t_build_ui = if ui_changed || is_first_frame {
+        b0.elapsed().as_secs_f32() * 1000.0
+    } else {
+        0.0_f32
+    };
 
-    if screen_changed || is_first_frame {
+    #[cfg(feature = "devkit")]
+    let s0 = std::time::Instant::now();
+    if ui_changed || screen_changed || is_first_frame {
         state
             .virtual_page_manager
             .on_viewport_resized(width, height, root_element);
+        state.virtual_page_manager.virtualize_tree(root_element);
+        physics_sync::sync_scroll_physics_from_tree(root_element, &mut state.scroll_physics);
+        state.transition_manager.sync_tree(root_element);
     }
-
-    state.virtual_page_manager.virtualize_tree(root_element);
-    physics_sync::sync_scroll_physics_from_tree(root_element, &mut state.scroll_physics);
-    state.transition_manager.sync_tree(root_element);
+    #[cfg(feature = "devkit")]
+    let t_sync = if ui_changed || screen_changed || is_first_frame {
+        s0.elapsed().as_secs_f32() * 1000.0
+    } else {
+        0.0_f32
+    };
     let is_animating = state.transition_manager.tick(dt) || state.transition_manager.is_animating();
 
     let (density, scaled_density) = state.cached_density;
@@ -109,12 +125,16 @@ pub fn update_and_render_state(
         }
     }
 
+    #[cfg(feature = "devkit")]
+    let mut t_taffy = 0.0_f32;
     let layout_recalculated = state.layout_dirty || state.cached_layout.is_none();
-    let mut layout_tree = if !state.layout_dirty
+    let layout_tree = if !state.layout_dirty
         && let Some(ref cached) = state.cached_layout
     {
         cached.clone()
     } else {
+        #[cfg(feature = "devkit")]
+        let l0 = std::time::Instant::now();
         state.last_ui_version = current_ui_version;
         let fresh = Arc::new(calculate_layout(
             root_element,
@@ -130,8 +150,23 @@ pub fn update_and_render_state(
         );
         state.cached_layout = Some(fresh.clone());
         state.layout_dirty = false;
+        #[cfg(feature = "devkit")]
+        {
+            t_taffy = l0.elapsed().as_secs_f32() * 1000.0;
+        }
         fresh
     };
+
+    #[cfg(feature = "devkit")]
+    if t_build_ui + t_sync + t_taffy > 16.0 {
+        sniffer_core::dev_log!(
+            "[MainThread Breakdown] Total: {:.1}ms (JS build_ui: {:.1}ms, Tree sync: {:.1}ms, Taffy layout: {:.1}ms)",
+            frame_start.elapsed().as_secs_f32() * 1000.0,
+            t_build_ui,
+            t_sync,
+            t_taffy
+        );
+    }
 
     let get_max_scroll = |target_id: Option<u64>| -> f32 {
         target_id
@@ -145,7 +180,7 @@ pub fn update_and_render_state(
             let (step_x, next_vx) =
                 sniffer_core::physics::step_momentum_decay(k.velocity_x, 7.62, dt);
             let (step_y, next_vy) =
-                sniffer_core::physics::step_momentum_decay(k.velocity_y, 7.62, dt);
+                sniffer_core::physics::step_momentum_decay(k.velocity_y, 3.6, dt);
             state.event_bus.push(UiEvent::Scroll(
                 Some(k.sv_id),
                 step_x,
@@ -161,6 +196,7 @@ pub fn update_and_render_state(
         }
     });
 
+    let mut scroll_offsets = std::collections::HashMap::new();
     let mut physics_active = false;
     let phys_ids: Vec<u64> = state.scroll_physics.keys().copied().collect();
     for sv_id in phys_ids {
@@ -195,7 +231,6 @@ pub fn update_and_render_state(
                         });
                     }
 
-                    let vmin_px = width.min(height) / 100.0;
                     let target_page_float = if phys.snap_just_completed {
                         clamped_page as f32
                     } else {
@@ -211,28 +246,13 @@ pub fn update_and_render_state(
                             .is_none_or(|p| (p - target_page_float).abs() > 0.002);
 
                     if page_moved {
-                        let layout_mut = Arc::make_mut(&mut layout_tree);
-                        let indicator_changed = physics_sync::update_indicator_dots_tracking(
-                            root_element,
-                            Some(layout_mut),
-                            target_page_float,
-                            vmin_px,
-                        );
                         state.last_indicator_page = Some(target_page_float);
-
-                        if indicator_changed {
-                            if state.cached_layout.is_some() {
-                                state.cached_layout = Some(layout_tree.clone());
-                            }
-                            physics_active = true;
-                        }
+                        physics_active = true;
                     }
                 }
             }
 
-            let pos_x = phys.pos_x;
-            let pos_y = phys.pos_y;
-            physics_sync::inject_physics_to_tree(root_element, sv_id, pos_x, pos_y);
+            scroll_offsets.insert(sv_id, (phys.pos_x, phys.pos_y));
         }
     }
 
@@ -262,7 +282,7 @@ pub fn update_and_render_state(
         let layout_end = std::time::Instant::now();
         state.render_state_version = state.render_state_version.wrapping_add(1);
         *shared_render_state.write().unwrap() = Arc::new(SharedRenderState {
-            root_element: root_element.clone(),
+            root_element: Arc::clone(&state.cached_root_element),
             layout_tree,
             metrics,
             style_map: state.style_map.clone(),
@@ -272,6 +292,8 @@ pub fn update_and_render_state(
             version: state.render_state_version,
             frame_start,
             layout_end,
+            scroll_offsets,
+            page_indicator_float: state.last_indicator_page,
         });
     }
 }

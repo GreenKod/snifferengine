@@ -26,6 +26,7 @@ pub struct ScrollPhysics {
     pub rubber_band: Option<f32>,
     pub page_count: Option<u32>,
     pub on_snap: Option<String>,
+    pub drag_start_x: f32,
 }
 
 impl Default for ScrollPhysics {
@@ -49,6 +50,7 @@ impl Default for ScrollPhysics {
             rubber_band: None,
             page_count: None,
             on_snap: None,
+            drag_start_x: 0.0,
         }
     }
 }
@@ -162,7 +164,7 @@ impl ScrollPhysics {
                 self.spring_sim_y = None;
             }
         } else if !self.is_dragging && self.vel_y.abs() > 0.5 {
-            let (step_y, next_vy) = super::velocity::step_momentum_decay(self.vel_y, 7.62, dt);
+            let (step_y, next_vy) = super::velocity::step_momentum_decay(self.vel_y, 5.8, dt);
             self.pos_y += step_y;
             self.vel_y = next_vy;
             active = true;
@@ -198,6 +200,9 @@ impl ScrollPhysics {
     }
 
     pub fn apply_drag(&mut self, delta_x: f32) {
+        if !self.is_dragging {
+            self.drag_start_x = self.pos_x;
+        }
         self.is_dragging = true;
         self.vel_x = 0.0;
         self.snap_target_x = None;
@@ -243,20 +248,21 @@ impl ScrollPhysics {
     pub fn release_drag_y(&mut self, vel_y: f32) {
         self.is_dragging = false;
         let max_limit_y = self.max_y.unwrap_or(0.0);
+        let clamped_vel = vel_y.clamp(-4500.0, 4500.0);
         if self.pos_y < 0.0 {
             self.vel_y = 0.0;
             self.spring_sim_y = Some(
                 SpringSimulation::new(SpringConfig::rubber_band(), self.pos_y, 0.0)
-                    .with_initial_velocity(vel_y),
+                    .with_initial_velocity(clamped_vel),
             );
         } else if self.pos_y > max_limit_y {
             self.vel_y = 0.0;
             self.spring_sim_y = Some(
                 SpringSimulation::new(SpringConfig::rubber_band(), self.pos_y, max_limit_y)
-                    .with_initial_velocity(vel_y),
+                    .with_initial_velocity(clamped_vel),
             );
         } else {
-            self.vel_y = vel_y;
+            self.vel_y = clamped_vel;
         }
     }
 
@@ -272,30 +278,81 @@ impl ScrollPhysics {
         if let Some(page_width) = self.snap_x {
             if page_width > 0.0 {
                 let last_page = (self.page_count.unwrap_or(1) as f32) - 1.0;
-                let page_float = self.pos_x / page_width;
+                let start_page = (self.drag_start_x / page_width)
+                    .round()
+                    .clamp(0.0, last_page);
+                let delta = self.pos_x - (start_page * page_width);
+                let frac = delta / page_width;
+                let screens_per_sec = vel_x.abs() / page_width;
 
-                let target_page = if vel_x > 80.0 {
-                    (page_float.floor() + 1.0).min(last_page)
-                } else if vel_x < -80.0 {
-                    (page_float.ceil() - 1.0).max(0.0)
+                // Deterministic target page resolution:
+                // If displaced forward (frac > 0, to the right of start_page):
+                //   - Flick forward (vel_x > 100): advance to start_page + 1
+                //   - Flick backward (vel_x < -100): snap back to start_page
+                //   - Slow release (|vel_x| <= 100): if frac >= 0.35 advance to start_page + 1, else start_page
+                // If displaced backward (frac < 0, to the left of start_page):
+                //   - Flick backward (vel_x < -100): advance to start_page - 1
+                //   - Flick forward (vel_x > 100): snap back to start_page
+                //   - Slow release (|vel_x| <= 100): if frac <= -0.35 advance to start_page - 1, else start_page
+                let target_page = if frac > 0.001 {
+                    if vel_x > 100.0 {
+                        (start_page + 1.0).min(last_page)
+                    } else if vel_x < -100.0 {
+                        start_page
+                    } else if frac >= 0.35 {
+                        (start_page + 1.0).min(last_page)
+                    } else {
+                        start_page
+                    }
+                } else if frac < -0.001 {
+                    if vel_x < -100.0 {
+                        (start_page - 1.0).max(0.0)
+                    } else if vel_x > 100.0 {
+                        start_page
+                    } else if frac <= -0.35 {
+                        (start_page - 1.0).max(0.0)
+                    } else {
+                        start_page
+                    }
+                } else if vel_x > 100.0 && screens_per_sec >= 0.5 {
+                    (start_page + 1.0).min(last_page)
+                } else if vel_x < -100.0 && screens_per_sec >= 0.5 {
+                    (start_page - 1.0).max(0.0)
                 } else {
-                    page_float.round().clamp(0.0, last_page)
+                    start_page
                 };
 
                 let target_x = (target_page * page_width).clamp(0.0, max_x);
                 self.snap_target_x = Some(target_x);
                 self.spring_start_x = self.pos_x;
 
-                let mut init_vel = self.vel_x.clamp(-1200.0, 1200.0);
-                if (target_x >= max_x && init_vel > 0.0) || (target_x <= 0.0 && init_vel < 0.0) {
+                // Dynamic spring tuning:
+                // Fast flicks snap into place quickly (k up to 1200, ~120ms lock-in)
+                // Slow drags glide into place smoothly (k = 220, ~320ms glide)
+                let k = (220.0 + screens_per_sec * 240.0).clamp(220.0, 1200.0);
+                let c = 1.95 * k.sqrt();
+                let dynamic_spring = SpringConfig {
+                    mass: 1.0,
+                    stiffness: k,
+                    damping: c,
+                    position_tolerance: 0.05,
+                    velocity_tolerance: 0.1,
+                };
+
+                let max_screen_vel = 6.0 * page_width;
+                let dist_to_target = target_x - self.pos_x;
+                let mut init_vel = self.vel_x.clamp(-max_screen_vel, max_screen_vel);
+                if (dist_to_target > 0.0 && init_vel < 0.0)
+                    || (dist_to_target < 0.0 && init_vel > 0.0)
+                {
                     init_vel = 0.0;
                 }
+
                 self.spring_start_vel_x = init_vel;
                 self.spring_time = 0.0;
 
-                // Analytical spring simulation for page snap
                 self.spring_sim_x = Some(
-                    SpringSimulation::new(SpringConfig::snappy(), self.pos_x, target_x)
+                    SpringSimulation::new(dynamic_spring, self.pos_x, target_x)
                         .with_initial_velocity(init_vel),
                 );
             }
