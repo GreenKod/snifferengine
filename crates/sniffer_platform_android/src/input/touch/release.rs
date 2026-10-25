@@ -36,7 +36,8 @@ pub fn handle_touch_release(
                 let screen_h = f32::from_bits(
                     sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
                 );
-                let is_bottom_nav_gesture = screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
+                let is_bottom_nav_gesture =
+                    screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
                 if sv_id == drawer_id {
                     if is_bottom_nav_gesture {
                         phys.pos_y = 0.0;
@@ -157,8 +158,8 @@ pub fn handle_touch_release(
         let current_pos_y = released_sv_id
             .and_then(|id| state.physics.scroll_physics.get(&id))
             .map_or(0.0, |p| p.pos_y);
-        let was_scrolled_down =
-            state.input.active_scrollview_start_y > 30.0 * density && current_pos_y > 10.0 * density;
+        let was_scrolled_down = state.input.active_scrollview_start_y > 30.0 * density
+            && current_pos_y > 10.0 * density;
         let swipe_gesture = crate::input::gestures::GestureClassifier::classify_vertical_swipe(
             state.input.touch_start_pos,
             point,
@@ -173,7 +174,8 @@ pub fn handle_touch_release(
                 let screen_h = f32::from_bits(
                     sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
                 );
-                let is_bottom_nav_gesture = screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
+                let is_bottom_nav_gesture =
+                    screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
                 if is_bottom_nav_gesture {
                     state.runtime.event_bus.push(UiEvent::SwipeDown);
                     let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
@@ -201,7 +203,12 @@ pub fn handle_touch_release(
                 }
 
                 if pulled_displacement > 0.0 {
-                    if let Some(anim) = state.runtime.transition_manager.states.get_mut("app_drawer_root") {
+                    if let Some(anim) = state
+                        .runtime
+                        .transition_manager
+                        .states
+                        .get_mut("app_drawer_root")
+                    {
                         anim.current_style.transform.translate_y = pulled_displacement;
                         anim.start_style.transform.translate_y = pulled_displacement;
                     }

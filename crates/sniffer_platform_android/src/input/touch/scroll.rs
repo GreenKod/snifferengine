@@ -124,10 +124,12 @@ pub fn handle_touch_move_or_down(
                         .as_deref()
                         .map(|id_str| sniffer_core::ui::widget::fnv1a(id_str.as_bytes()));
                     let screen_h = f32::from_bits(
-                        sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
+                        sniffer_core::types::SCREEN_HEIGHT
+                            .load(std::sync::atomic::Ordering::Relaxed),
                     );
                     let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
-                    let is_bottom_nav_area = screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
+                    let is_bottom_nav_area =
+                        screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
                     if !(sv_id == Some(drawer_id) && is_bottom_nav_area) {
                         state.input.active_scrollview_drag = sv_id;
                     }

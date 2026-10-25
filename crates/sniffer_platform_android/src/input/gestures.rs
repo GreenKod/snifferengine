@@ -206,4 +206,3 @@ mod tests {
         assert_eq!(res, Some(VerticalSwipeGesture::SwipeDown));
     }
 }
-
