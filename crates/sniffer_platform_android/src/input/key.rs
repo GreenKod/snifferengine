@@ -60,13 +60,7 @@ pub fn handle_key_event(key_event: &KeyEvent, state: &mut crate::app::AppState) 
         if keycode == Keycode::Del {
             state.runtime.event_bus.push(UiEvent::Backspace);
         } else if keycode == Keycode::Back {
-            state.runtime.event_bus.push(UiEvent::SwipeDown);
-            let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
-            if let Some(phys) = state.physics.scroll_physics.get_mut(&drawer_id) {
-                phys.pos_y = 0.0;
-                phys.vel_y = 0.0;
-                phys.spring_sim_y = None;
-            }
+            state.runtime.event_bus.push(UiEvent::Back);
         } else if let Some(c) = keycode_to_char(keycode) {
             state
                 .runtime

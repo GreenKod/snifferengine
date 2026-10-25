@@ -32,23 +32,18 @@ pub fn handle_touch_release(
                     phys.release_drag(fling_vel_x);
                 }
             } else {
-                let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
                 let screen_h = f32::from_bits(
                     sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
                 );
-                let is_bottom_nav_gesture =
+                let is_system_nav_gesture =
                     screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
-                if sv_id == drawer_id {
-                    if is_bottom_nav_gesture {
-                        phys.pos_y = 0.0;
-                        phys.vel_y = 0.0;
-                        phys.spring_sim_y = None;
-                    } else if phys.pos_y < 0.0 {
-                        // If pulled down into negative, let gesture classifier decide whether to dismiss or spring back
-                        phys.vel_y = 0.0;
-                    } else {
-                        phys.release_drag_y(fling_vel_y);
-                    }
+                if is_system_nav_gesture {
+                    phys.pos_y = 0.0;
+                    phys.vel_y = 0.0;
+                    phys.spring_sim_y = None;
+                } else if phys.pos_y < 0.0 {
+                    // If pulled into elastic overscroll, let gesture classifier decide whether to dismiss or spring back
+                    phys.vel_y = 0.0;
                 } else {
                     phys.release_drag_y(fling_vel_y);
                 }
@@ -177,61 +172,71 @@ pub fn handle_touch_release(
                 let is_bottom_nav_gesture =
                     screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
                 if is_bottom_nav_gesture {
+                    // Upward swipe starting from the bottom system navigation bar is an OS Home/Dismiss gesture
                     state.runtime.event_bus.push(UiEvent::SwipeDown);
-                    let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
-                    if let Some(phys) = state.physics.scroll_physics.get_mut(&drawer_id) {
-                        phys.pos_y = 0.0;
-                        phys.vel_y = 0.0;
-                        phys.spring_sim_y = None;
+                    if let Some(sv_id) = released_sv_id {
+                        if let Some(phys) = state.physics.scroll_physics.get_mut(&sv_id) {
+                            phys.pos_y = 0.0;
+                            phys.vel_y = 0.0;
+                            phys.spring_sim_y = None;
+                        }
                     }
                 } else {
                     state.runtime.event_bus.push(UiEvent::SwipeUp);
                 }
             }
             Some(crate::input::gestures::VerticalSwipeGesture::SwipeDown) => {
-                let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
-                let pulled_displacement = state
-                    .physics
-                    .scroll_physics
-                    .get(&drawer_id)
-                    .map_or(0.0, |p| (-p.pos_y).max(0.0));
+                let mut pulled_displacement = 0.0;
+                let mut target_container = None;
 
-                if let Some(phys) = state.physics.scroll_physics.get_mut(&drawer_id) {
-                    phys.pos_y = 0.0;
-                    phys.vel_y = 0.0;
-                    phys.spring_sim_y = None;
+                if let Some(sv_id) = released_sv_id {
+                    if let Some(phys) = state.physics.scroll_physics.get_mut(&sv_id) {
+                        pulled_displacement = (-phys.pos_y).max(0.0);
+                        phys.pos_y = 0.0;
+                        phys.vel_y = 0.0;
+                        phys.spring_sim_y = None;
+
+                        if let Some(cfg) = &phys.dismiss_config {
+                            if cfg.direction == sniffer_core::types::DismissDirection::Down {
+                                target_container = cfg.target_container_id.clone();
+                            }
+                        }
+                    }
                 }
 
-                if pulled_displacement > 0.0 {
-                    if let Some(anim) = state
-                        .runtime
-                        .transition_manager
-                        .states
-                        .get_mut("app_drawer_root")
+                if let Some(target_id) = target_container {
+                    let screen_h = f32::from_bits(
+                        sniffer_core::types::SCREEN_HEIGHT
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                    );
+                    if let Some(anim) = state.runtime.transition_manager.states.get_mut(&target_id)
                     {
-                        anim.current_style.transform.translate_y = pulled_displacement;
                         anim.start_style.transform.translate_y = pulled_displacement;
+                        anim.current_style.transform.translate_y = pulled_displacement;
+                        anim.target_style.transform.translate_y = screen_h;
+                        anim.target_style.opacity = 0.0;
+                        anim.target_style.transition.duration = 0.22;
+                        anim.target_style.transition.easing = sniffer_core::style::Easing::EaseOut;
+                        anim.time_elapsed = 0.0;
+                        anim.is_active = true;
                     }
                 }
 
                 state.runtime.event_bus.push(UiEvent::SwipeDown);
 
                 if let Some(sv_id) = released_sv_id {
-                    if sv_id != drawer_id {
-                        if let Some(phys) = state.physics.scroll_physics.get_mut(&sv_id) {
-                            if phys.snap_x.is_none() {
-                                phys.pos_y = 0.0;
-                                phys.vel_y = 0.0;
-                                phys.spring_sim_y = None;
-                            }
+                    for (&id, phys) in &mut state.physics.scroll_physics {
+                        if id != sv_id && phys.snap_x.is_none() {
+                            phys.pos_y = 0.0;
+                            phys.vel_y = 0.0;
+                            phys.spring_sim_y = None;
                         }
                     }
                 }
             }
             None => {
-                let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
-                if released_sv_id == Some(drawer_id) {
-                    if let Some(phys) = state.physics.scroll_physics.get_mut(&drawer_id) {
+                if let Some(sv_id) = released_sv_id {
+                    if let Some(phys) = state.physics.scroll_physics.get_mut(&sv_id) {
                         if phys.pos_y < 0.0 {
                             phys.release_drag_y(0.0);
                         }

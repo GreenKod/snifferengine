@@ -85,17 +85,17 @@ pub mod tests {
     pub fn test_is_structural_layout_id() {
         assert!(is_structural_layout_id("root"));
         assert!(is_structural_layout_id("home_screen_layer"));
-        assert!(is_structural_layout_id("drawer_grid_wrapper"));
-        assert!(is_structural_layout_id("app_drawer_root"));
+        assert!(is_structural_layout_id("content_grid_wrapper"));
+        assert!(is_structural_layout_id("modal_layer_root"));
         assert!(is_structural_layout_id("app_grid_track"));
         assert!(is_structural_layout_id("page_grid_0"));
         assert!(is_structural_layout_id("actions_grid"));
-        assert!(is_structural_layout_id("drawer_header"));
+        assert!(is_structural_layout_id("section_header"));
 
         assert!(!is_structural_layout_id("app_btn_1"));
-        assert!(!is_structural_layout_id("drawer_card_0"));
+        assert!(!is_structural_layout_id("item_card_0"));
         assert!(!is_structural_layout_id("dock_app_btn_com_example"));
-        assert!(!is_structural_layout_id("drawer_close_btn"));
-        assert!(!is_structural_layout_id("drawer_search_container"));
+        assert!(!is_structural_layout_id("dialog_close_btn"));
+        assert!(!is_structural_layout_id("search_input_container"));
     }
 }

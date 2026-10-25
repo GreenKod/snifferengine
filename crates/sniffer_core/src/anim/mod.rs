@@ -330,11 +330,14 @@ impl TransitionManager {
                     state.target_style = new_style.clone();
                     state.time_elapsed = 0.0;
                     state.is_active = true;
-                } else {
+                } else if !state.is_active {
                     // Instant apply or non-animatable property change (e.g. layout width, height)
                     state.target_style = new_style.clone();
                     state.current_style = new_style.clone();
                     state.is_active = false;
+                } else {
+                    // Animation is already running toward this visual target; preserve active progress.
+                    state.target_style = new_style.clone();
                 }
             }
         } else if let Some(ref enter) = new_style.enter_from {

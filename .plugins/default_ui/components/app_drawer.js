@@ -272,6 +272,12 @@ function AppDrawerComponent() {
         ScrollView("app_drawer_scroll", {
             dynamic_sensitivity: true,
             momentum_scrolling: true,
+            rubber_band: 0.60,
+            dismiss_config: {
+                direction: "Down",
+                threshold: 60.0,
+                target_container_id: "app_drawer_root",
+            },
             style: {
                 width: pct(100),
                 height: pct(100),

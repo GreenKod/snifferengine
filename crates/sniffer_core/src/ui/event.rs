@@ -23,6 +23,8 @@ pub enum UiEvent {
     SwipeUp,
     /// Gesture: Vertical swipe downwards (e.g. to return to top floor/home).
     SwipeDown,
+    /// Hardware or system back navigation button / gesture.
+    Back,
 }
 
 #[derive(Default)]

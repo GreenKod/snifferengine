@@ -3,6 +3,28 @@ use serde::{Deserialize, Serialize};
 
 pub type ElementChildren = Vec<Element>;
 
+/// Direction that can trigger a dismiss gesture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DismissDirection {
+    Down,
+    Up,
+    Left,
+    Right,
+}
+
+/// Configuration for dismiss gestures on scrollable containers.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ScrollDismissConfig {
+    /// Gesture direction that triggers dismiss (e.g. Down, Up).
+    pub direction: DismissDirection,
+    /// Threshold in dp beyond which dismiss triggers.
+    #[serde(default)]
+    pub threshold: Option<f32>,
+    /// Optional target container element ID to receive dragged displacement.
+    #[serde(default)]
+    pub target_container_id: Option<String>,
+}
+
 /// Platform-agnostic UI tree node.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Element {
@@ -55,6 +77,9 @@ pub enum Element {
         /// Callback function name to invoke in JS when snapping completes.
         #[serde(default)]
         on_snap: Option<String>,
+        /// Dismiss gesture configuration (direction, threshold, displacement handoff target).
+        #[serde(default)]
+        dismiss_config: Option<ScrollDismissConfig>,
     },
     Checkbox {
         id: Option<String>,

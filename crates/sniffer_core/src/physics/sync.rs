@@ -16,6 +16,7 @@ pub fn sync_scroll_physics_from_tree<S: BuildHasher>(
         rubber_band,
         page_count,
         on_snap,
+        dismiss_config,
         ..
     } = element
     {
@@ -39,6 +40,7 @@ pub fn sync_scroll_physics_from_tree<S: BuildHasher>(
         // Always sync snap/rubber-band config (even when snap_x/snap_y are None).
         entry.snap_x = *snap_x;
         entry.rubber_band = *rubber_band;
+        entry.dismiss_config.clone_from(dismiss_config);
         entry.page_count = *page_count;
         entry.on_snap.clone_from(on_snap);
         let _ = snap_y; // snap_y is tracked via UiEvent::Scroll, not physics

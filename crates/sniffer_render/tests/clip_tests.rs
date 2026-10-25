@@ -150,6 +150,7 @@ fn test_scrollview_clip_stack_lifecycle_and_radius() {
         rubber_band: None,
         page_count: None,
         on_snap: None,
+        dismiss_config: None,
     };
 
     let scroll_layout = LayoutNode {

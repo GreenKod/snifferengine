@@ -215,8 +215,8 @@ globalThis.onEvent = function (eventJsonString) {
         return "[]";
     }
 
-    // SwipeDown: Go up to top floor (Home Screen)
-    if (e.type === "SwipeDown") {
+    // SwipeDown or Back: Go up to top floor (Home Screen)
+    if (e.type === "SwipeDown" || e.type === "Back") {
         if (state.currentFloor === "bottom") {
             state.goToTopFloor();
         }

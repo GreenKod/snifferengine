@@ -46,5 +46,6 @@ pub fn serialize_ui_event_to_json(event: &UiEvent, plugin_id: &str) -> String {
         }
         UiEvent::SwipeUp => r#"{"type":"SwipeUp"}"#.to_string(),
         UiEvent::SwipeDown => r#"{"type":"SwipeDown"}"#.to_string(),
+        UiEvent::Back => r#"{"type":"Back"}"#.to_string(),
     }
 }

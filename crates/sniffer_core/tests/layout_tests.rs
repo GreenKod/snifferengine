@@ -217,6 +217,7 @@ fn test_full_hierarchy_card_position() {
         rubber_band: None,
         page_count: None,
         on_snap: None,
+        dismiss_config: None,
     };
 
     // 5. App Grid Wrapper

@@ -242,6 +242,7 @@ function ScrollView(id, opts, children) {
             snap_x: opts.snap_x !== undefined ? opts.snap_x : null,
             snap_y: opts.snap_y !== undefined ? opts.snap_y : null,
             rubber_band: opts.rubber_band !== undefined ? opts.rubber_band : null,
+            dismiss_config: opts.dismiss_config !== undefined ? opts.dismiss_config : null,
             page_count: opts.page_count !== undefined ? opts.page_count : null,
             on_snap: opts.on_snap !== undefined ? opts.on_snap : null,
         },

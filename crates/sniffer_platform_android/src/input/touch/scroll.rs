@@ -47,9 +47,9 @@ pub fn handle_touch_move_or_down(
             let screen_h = f32::from_bits(
                 sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
             );
-            let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
-            let is_bottom_nav_area = screen_h > 0.0 && point.y > screen_h * 0.93;
-            if sv_id == Some(drawer_id) && is_bottom_nav_area {
+            // System navigation bar exclusion zone (e.g. bottom 7% of screen / gesture pill area)
+            let is_system_nav_area = screen_h > 0.0 && point.y > screen_h * 0.93;
+            if is_system_nav_area {
                 state.input.active_scrollview_drag = None;
             } else {
                 state.input.active_scrollview_drag = sv_id;
@@ -127,10 +127,9 @@ pub fn handle_touch_move_or_down(
                         sniffer_core::types::SCREEN_HEIGHT
                             .load(std::sync::atomic::Ordering::Relaxed),
                     );
-                    let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
-                    let is_bottom_nav_area =
+                    let is_system_nav_area =
                         screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
-                    if !(sv_id == Some(drawer_id) && is_bottom_nav_area) {
+                    if !is_system_nav_area {
                         state.input.active_scrollview_drag = sv_id;
                     }
                 }
@@ -147,19 +146,15 @@ pub fn handle_touch_move_or_down(
                     phys.is_dragging = true;
                 }
             } else {
-                let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
-                if sv_id == drawer_id {
+                let rubber_coeff = phys.rubber_band.unwrap_or(0.0);
+                if rubber_coeff > 0.0 && phys.pos_y <= 0.0 && delta_y < 0.0 {
                     let density = state.layout.cached_density.0.max(1.0);
                     let max_pull_down = -180.0 * density;
-                    if phys.pos_y <= 0.0 && delta_y < 0.0 {
-                        // Natural rubber-band pull-down at top of drawer ("sadece biraz daha gelsin")
-                        let new_pos = phys.pos_y + delta_y * 0.60;
-                        phys.pos_y = new_pos.max(max_pull_down);
-                        phys.vel_y = 0.0;
-                        phys.spring_sim_y = None;
-                    } else {
-                        phys.apply_drag_y(delta_y);
-                    }
+                    // Natural rubber-band pull-down at top of any elastic scrollable view
+                    let new_pos = phys.pos_y + delta_y * rubber_coeff;
+                    phys.pos_y = new_pos.max(max_pull_down);
+                    phys.vel_y = 0.0;
+                    phys.spring_sim_y = None;
                 } else {
                     phys.apply_drag_y(delta_y);
                 }
