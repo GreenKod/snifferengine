@@ -136,7 +136,11 @@ pub fn handle_touch_release(
             state.runtime.event_bus.push(UiEvent::ClickOutside);
         }
     } else {
-        let was_scrolled_down = state.input.active_scrollview_start_y > 10.0;
+        let current_pos_y = released_sv_id
+            .and_then(|id| state.physics.scroll_physics.get(&id))
+            .map_or(0.0, |p| p.pos_y);
+        let was_scrolled_down =
+            state.input.active_scrollview_start_y > 30.0 * density && current_pos_y > 10.0 * density;
         let swipe_gesture = crate::input::gestures::GestureClassifier::classify_vertical_swipe(
             state.input.touch_start_pos,
             point,

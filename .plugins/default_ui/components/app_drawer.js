@@ -152,12 +152,25 @@ function AppDrawerComponent() {
                 text_size: vmin(3.0),
                 width: "Auto",
             })
-        ]) : Container("drawer_search_spacer", { width: px(0), height: px(0) }, [])
+        ]) : Container("drawer_close_btn", {
+            width: px(vmin(5.6)),
+            height: px(vmin(5.6)),
+            background_color: hex("#20334155"),
+            border_radius: vmin(2.8),
+            justify_content: "Center",
+            align_items: "Center",
+        }, [
+            Label("drawer_close_icon", "▼", {
+                text_color: hex("#94A3B8"),
+                text_size: vmin(3.0),
+                width: "Auto",
+            })
+        ])
     ]);
 
     const drawerChildren = [
         // Drawer Handle Pill (Android tarzı üst çekme çizgisi)
-        Container("drawer_handle_pill_wrapper", {
+        Container("drawer_handle_pill", {
             width: pct(100),
             height: px(vh(6.5)),
             padding: padTRBL(vh(3.8), 0, 0, 0),

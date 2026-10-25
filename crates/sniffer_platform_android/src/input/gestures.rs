@@ -39,11 +39,12 @@ impl GestureClassifier {
         let dx = end_pos.x - start_pos.x;
         let vel_y_down = -fling_vel_y;
 
-        let swipe_thresh = 120.0 * density.max(1.0);
-        let flick_thresh = 50.0 * density.max(1.0);
+        let swipe_up_thresh = 100.0 * density.max(1.0);
+        let swipe_down_thresh = 80.0 * density.max(1.0);
+        let flick_thresh = 40.0 * density.max(1.0);
 
         let is_vertical = gesture_axis == GestureAxis::Vertical
-            || (gesture_axis == GestureAxis::Undetermined && dy.abs() > dx.abs() * 1.3);
+            || (gesture_axis == GestureAxis::Undetermined && dy.abs() > dx.abs() * 1.15);
 
         if !is_vertical {
             return None;
@@ -52,8 +53,8 @@ impl GestureClassifier {
         if dy < 0.0 {
             // SwipeUp: Open drawer from home screen
             let upward_dist = -dy;
-            let is_flick = upward_dist > flick_thresh && vel_y_down < -400.0;
-            let is_drag = upward_dist >= swipe_thresh;
+            let is_flick = upward_dist > flick_thresh && vel_y_down < -300.0;
+            let is_drag = upward_dist >= swipe_up_thresh;
             if is_flick || is_drag {
                 return Some(VerticalSwipeGesture::SwipeUp);
             }
@@ -61,8 +62,8 @@ impl GestureClassifier {
             // SwipeDown: Close drawer back to home screen
             // Only allowed when NOT scrolled down within the list of apps!
             let downward_dist = dy;
-            let is_flick = downward_dist > flick_thresh && vel_y_down > 400.0;
-            let is_drag = downward_dist >= (swipe_thresh * 1.1);
+            let is_flick = downward_dist > flick_thresh && vel_y_down > 250.0;
+            let is_drag = downward_dist >= swipe_down_thresh;
             if is_flick || is_drag {
                 return Some(VerticalSwipeGesture::SwipeDown);
             }
@@ -158,4 +159,51 @@ mod tests {
         );
         assert_eq!(res, None);
     }
+
+    #[test]
+    fn test_swipe_down_natural_flick_and_drag() {
+        let start = Point::new(300.0, 400.0);
+        let end_flick = Point::new(300.0, 490.0); // 90px down (>= 40*2=80)
+        let end_drag = Point::new(300.0, 570.0); // 170px down (>= 80*2=160)
+
+        // Moderate flick velocity (fling_vel_y = -280.0, vel_y_down = 280.0 > 250.0)
+        let res_flick = GestureClassifier::classify_vertical_swipe(
+            start,
+            end_flick,
+            -280.0,
+            2.0,
+            GestureAxis::Vertical,
+            false,
+        );
+        assert_eq!(res_flick, Some(VerticalSwipeGesture::SwipeDown));
+
+        // Drag with 0 velocity
+        let res_drag = GestureClassifier::classify_vertical_swipe(
+            start,
+            end_drag,
+            0.0,
+            2.0,
+            GestureAxis::Vertical,
+            false,
+        );
+        assert_eq!(res_drag, Some(VerticalSwipeGesture::SwipeDown));
+    }
+
+    #[test]
+    fn test_swipe_down_diagonal_thumb_arc() {
+        // Natural thumb swipe: dy = 120, dx = 95 -> ratio = 120/95 = 1.263 > 1.15
+        let start = Point::new(300.0, 400.0);
+        let end_diagonal = Point::new(395.0, 520.0);
+
+        let res = GestureClassifier::classify_vertical_swipe(
+            start,
+            end_diagonal,
+            -300.0,
+            2.0,
+            GestureAxis::Undetermined,
+            false,
+        );
+        assert_eq!(res, Some(VerticalSwipeGesture::SwipeDown));
+    }
 }
+

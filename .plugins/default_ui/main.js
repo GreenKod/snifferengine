@@ -241,6 +241,17 @@ globalThis.onEvent = function (eventJsonString) {
         return "[]";
     }
 
+    if (e.type === "ClickOutside") {
+        if (state.isSearchFocused) {
+            state.isSearchFocused = false;
+            if (typeof blurInput === "function") {
+                blurInput();
+            }
+            SnifferUI.forceUpdate();
+        }
+        return "[]";
+    }
+
     if (e.type === "Click") {
         const idStr = String(e.id || "");
 
@@ -249,6 +260,7 @@ globalThis.onEvent = function (eventJsonString) {
             "drawer_close_btn",
             "drawer_close_icon",
             "drawer_handle",
+            "drawer_handle_pill",
             "drawer_handle_pill_wrapper"
         ])) {
             state.goToTopFloor();
