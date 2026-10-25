@@ -40,8 +40,8 @@ impl GestureClassifier {
         let vel_y_down = -fling_vel_y;
 
         let swipe_up_thresh = 50.0 * density.max(1.0);
-        let swipe_down_thresh = 40.0 * density.max(1.0);
-        let flick_thresh = 24.0 * density.max(1.0);
+        let swipe_down_thresh = 60.0 * density.max(1.0);
+        let flick_thresh = 28.0 * density.max(1.0);
 
         let is_vertical = gesture_axis == GestureAxis::Vertical
             || (gesture_axis == GestureAxis::Undetermined && dy.abs() > dx.abs() * 1.15);
