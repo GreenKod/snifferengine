@@ -160,11 +160,10 @@ pub fn handle_touch_move_or_down(
                     } else {
                         phys.apply_drag_y(delta_y);
                     }
-                    phys.is_dragging = true;
                 } else {
                     phys.apply_drag_y(delta_y);
-                    phys.is_dragging = true;
                 }
+                phys.is_dragging = true;
             }
         }
     }
