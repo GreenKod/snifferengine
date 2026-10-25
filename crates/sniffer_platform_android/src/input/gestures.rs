@@ -39,9 +39,9 @@ impl GestureClassifier {
         let dx = end_pos.x - start_pos.x;
         let vel_y_down = -fling_vel_y;
 
-        let swipe_up_thresh = 100.0 * density.max(1.0);
-        let swipe_down_thresh = 80.0 * density.max(1.0);
-        let flick_thresh = 40.0 * density.max(1.0);
+        let swipe_up_thresh = 50.0 * density.max(1.0);
+        let swipe_down_thresh = 40.0 * density.max(1.0);
+        let flick_thresh = 24.0 * density.max(1.0);
 
         let is_vertical = gesture_axis == GestureAxis::Vertical
             || (gesture_axis == GestureAxis::Undetermined && dy.abs() > dx.abs() * 1.15);
@@ -53,7 +53,7 @@ impl GestureClassifier {
         if dy < 0.0 {
             // SwipeUp: Open drawer from home screen
             let upward_dist = -dy;
-            let is_flick = upward_dist > flick_thresh && vel_y_down < -300.0;
+            let is_flick = upward_dist > flick_thresh && vel_y_down < -180.0;
             let is_drag = upward_dist >= swipe_up_thresh;
             if is_flick || is_drag {
                 return Some(VerticalSwipeGesture::SwipeUp);
@@ -62,7 +62,7 @@ impl GestureClassifier {
             // SwipeDown: Close drawer back to home screen
             // Only allowed when NOT scrolled down within the list of apps!
             let downward_dist = dy;
-            let is_flick = downward_dist > flick_thresh && vel_y_down > 250.0;
+            let is_flick = downward_dist > flick_thresh && vel_y_down > 180.0;
             let is_drag = downward_dist >= swipe_down_thresh;
             if is_flick || is_drag {
                 return Some(VerticalSwipeGesture::SwipeDown);

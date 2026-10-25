@@ -89,7 +89,7 @@ function Root() {
             translate_y: isBottomFloor ? -24.0 : 0.0,
         },
         transition: {
-            duration: 0.36,
+            duration: 0.24,
             easing: "ease_out"
         }
     }, homeChildren);
@@ -225,7 +225,11 @@ globalThis.onEvent = function (eventJsonString) {
 
     if (e.type === "TextInput") {
         if (state.currentFloor === "bottom" && typeof e.text === "string") {
-            state.drawerSearchQuery = (state.drawerSearchQuery || "") + e.text;
+            if (e.replace) {
+                state.drawerSearchQuery = e.text;
+            } else {
+                state.drawerSearchQuery = (state.drawerSearchQuery || "") + e.text;
+            }
             state.rebuildCardHashCache();
             SnifferUI.forceUpdate();
         }
@@ -254,6 +258,13 @@ globalThis.onEvent = function (eventJsonString) {
 
     if (e.type === "Click") {
         const idStr = String(e.id || "");
+
+        // When in App Drawer (Floor 2), ignore any accidental clicks on background Floor 1 elements
+        if (state.currentFloor === "bottom") {
+            if (idStr.indexOf("p0_") === 0 || idStr.indexOf("dock_") === 0) {
+                return "[]";
+            }
+        }
 
         // Close App Drawer -> Go to Top Floor
         if (matchTargetId(idStr, [

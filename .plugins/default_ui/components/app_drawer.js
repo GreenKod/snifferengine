@@ -53,9 +53,9 @@ function AppDrawerCardComponent(app, index, isLandscape, isBottomFloor) {
             }
         },
         transition: {
-            duration: 0.35,
+            duration: 0.32,
             easing: { spring: { stiffness: 280, damping: 24 } },
-            stagger_index: Math.min(index, 24),
+            stagger_index: Math.min(index, 20),
             stagger_interval: 0.015,
         },
     }, [
@@ -261,9 +261,12 @@ function AppDrawerComponent() {
                 scale: 1.0,
             }
         },
-        transition: {
-            duration: 0.36,
-            easing: { spring: { stiffness: 220, damping: 24 } }
+        transition: isBottomFloor ? {
+            duration: 0.28,
+            easing: "ease_out"
+        } : {
+            duration: 0.22,
+            easing: "ease_out"
         }
     }, [
         ScrollView("app_drawer_scroll", {

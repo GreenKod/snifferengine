@@ -11,13 +11,13 @@ const SnifferUI = (function () {
     function _snapshotState(state) {
         if (!state || typeof state !== "object") return {};
         const snapshot = {};
-        const keys = Object.keys(state);
-        for (let i = 0; i < keys.length; i++) {
-            const key = keys[i];
-            const desc = Object.getOwnPropertyDescriptor(state, key);
-            if (desc && !desc.get && typeof desc.value !== "function") {
-                snapshot[key] = desc.value;
-            }
+        for (const key in state) {
+            try {
+                const val = state[key];
+                if (typeof val !== "function") {
+                    snapshot[key] = val;
+                }
+            } catch (e) {}
         }
         return snapshot;
     }

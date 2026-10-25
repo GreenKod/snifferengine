@@ -44,7 +44,7 @@ class FloorManager {
                     }
                 }
                 self._drawerCloseTimer = null;
-            }, 400);
+            }, 230);
         }
     }
 

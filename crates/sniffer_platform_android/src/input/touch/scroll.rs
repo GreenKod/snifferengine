@@ -44,16 +44,25 @@ pub fn handle_touch_move_or_down(
             let sv_id = id
                 .as_deref()
                 .map(|id_str| sniffer_core::ui::widget::fnv1a(id_str.as_bytes()));
-            state.input.active_scrollview_drag = sv_id;
-            if let Some(id_val) = sv_id {
-                if let Some(phys) = state.physics.scroll_physics.get_mut(&id_val) {
-                    phys.vel_x = 0.0;
-                    phys.vel_y = 0.0;
-                    phys.spring_sim_x = None;
-                    phys.spring_sim_y = None;
-                    phys.snap_target_x = None;
-                    phys.is_dragging = true;
-                    phys.drag_start_x = phys.pos_x;
+            let screen_h = f32::from_bits(
+                sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
+            );
+            let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
+            let is_bottom_nav_area = screen_h > 0.0 && point.y > screen_h * 0.70;
+            if sv_id == Some(drawer_id) && is_bottom_nav_area {
+                state.input.active_scrollview_drag = None;
+            } else {
+                state.input.active_scrollview_drag = sv_id;
+                if let Some(id_val) = sv_id {
+                    if let Some(phys) = state.physics.scroll_physics.get_mut(&id_val) {
+                        phys.vel_x = 0.0;
+                        phys.vel_y = 0.0;
+                        phys.spring_sim_x = None;
+                        phys.spring_sim_y = None;
+                        phys.snap_target_x = None;
+                        phys.is_dragging = true;
+                        phys.drag_start_x = phys.pos_x;
+                    }
                 }
             }
         }
@@ -111,9 +120,17 @@ pub fn handle_touch_move_or_down(
             )) = find_hovered_scrollview(root_element, layout_tree, point)
             {
                 if capture_drag.unwrap_or(true) {
-                    state.input.active_scrollview_drag = id
+                    let sv_id = id
                         .as_deref()
                         .map(|id_str| sniffer_core::ui::widget::fnv1a(id_str.as_bytes()));
+                    let screen_h = f32::from_bits(
+                        sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
+                    );
+                    let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
+                    let is_bottom_nav_area = screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.70;
+                    if !(sv_id == Some(drawer_id) && is_bottom_nav_area) {
+                        state.input.active_scrollview_drag = sv_id;
+                    }
                 }
             }
         }
@@ -128,8 +145,22 @@ pub fn handle_touch_move_or_down(
                     phys.is_dragging = true;
                 }
             } else {
-                phys.apply_drag_y(delta_y);
-                phys.is_dragging = true;
+                let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
+                if sv_id == drawer_id {
+                    // When dragging DOWN (delta_y < 0.0) at the top of the drawer (pos_y <= 0.0),
+                    // clamp pos_y to 0.0 so the drawer contents DO NOT rubber-band or bounce back!
+                    if phys.pos_y <= 0.0 && delta_y < 0.0 {
+                        phys.pos_y = 0.0;
+                        phys.vel_y = 0.0;
+                        phys.spring_sim_y = None;
+                    } else {
+                        phys.apply_drag_y(delta_y);
+                    }
+                    phys.is_dragging = true;
+                } else {
+                    phys.apply_drag_y(delta_y);
+                    phys.is_dragging = true;
+                }
             }
         }
     }

@@ -50,6 +50,11 @@ pub fn keycode_to_char(keycode: Keycode) -> Option<char> {
 }
 
 pub fn handle_key_event(key_event: &KeyEvent, state: &mut crate::app::AppState) -> InputStatus {
+    sniffer_core::dev_log!(
+        "[Key] action={:?}, keycode={:?}",
+        key_event.action(),
+        key_event.key_code()
+    );
     if key_event.action() == KeyAction::Down {
         let keycode = key_event.key_code();
         if keycode == Keycode::Del {

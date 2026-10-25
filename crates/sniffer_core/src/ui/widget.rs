@@ -32,6 +32,8 @@ pub fn is_structural_layout_id(id: &str) -> bool {
         || lower.ends_with("_spacer")
         || lower.ends_with("_empty")
         || lower.ends_with("_scroll")
+        || lower.ends_with("_column")
+        || lower.ends_with("_row")
         || lower.starts_with("page_grid_")
 }
 

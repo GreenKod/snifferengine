@@ -32,7 +32,18 @@ pub fn handle_touch_release(
                     phys.release_drag(fling_vel_x);
                 }
             } else {
-                phys.release_drag_y(fling_vel_y);
+                let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
+                let screen_h = f32::from_bits(
+                    sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
+                );
+                let is_bottom_nav_gesture = screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.70;
+                if sv_id == drawer_id && (phys.pos_y <= 0.0 || is_bottom_nav_gesture) {
+                    phys.pos_y = 0.0;
+                    phys.vel_y = 0.0;
+                    phys.spring_sim_y = None;
+                } else {
+                    phys.release_drag_y(fling_vel_y);
+                }
             }
         } else {
             let momentum_enabled = if let Some((
@@ -152,7 +163,21 @@ pub fn handle_touch_release(
 
         match swipe_gesture {
             Some(crate::input::gestures::VerticalSwipeGesture::SwipeUp) => {
-                state.runtime.event_bus.push(UiEvent::SwipeUp);
+                let screen_h = f32::from_bits(
+                    sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
+                );
+                let is_bottom_nav_gesture = screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.70;
+                if is_bottom_nav_gesture {
+                    state.runtime.event_bus.push(UiEvent::SwipeDown);
+                    let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
+                    if let Some(phys) = state.physics.scroll_physics.get_mut(&drawer_id) {
+                        phys.pos_y = 0.0;
+                        phys.vel_y = 0.0;
+                        phys.spring_sim_y = None;
+                    }
+                } else {
+                    state.runtime.event_bus.push(UiEvent::SwipeUp);
+                }
             }
             Some(crate::input::gestures::VerticalSwipeGesture::SwipeDown) => {
                 state.runtime.event_bus.push(UiEvent::SwipeDown);
