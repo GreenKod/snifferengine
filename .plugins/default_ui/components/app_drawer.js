@@ -168,12 +168,12 @@ function AppDrawerComponent() {
         ])
     ]);
 
-    const drawerChildren = [
+    const drawerScrollChildren = [
         // Drawer Handle Pill (Android tarzı üst çekme çizgisi)
         Container("drawer_handle_pill", {
             width: pct(100),
-            height: px(vh(6.5)),
-            padding: padTRBL(vh(3.8), 0, 0, 0),
+            height: px(vh(5.5)),
+            padding: padTRBL(vh(2.8), 0, 0, 0),
             justify_content: "Center",
             align_items: "Center",
         }, [
@@ -197,7 +197,7 @@ function AppDrawerComponent() {
     ];
 
     if (cardItems.length === 0) {
-        drawerChildren.push(
+        drawerScrollChildren.push(
             Container("drawer_empty", {
                 width: pct(100),
                 height: px(vh(70.0)),
@@ -222,28 +222,18 @@ function AppDrawerComponent() {
         const gapX = isLandscape ? vw(1.8) : vw(2.2);
         const gapY = isLandscape ? vh(2.0) : vh(1.8);
 
-        drawerChildren.push(
-            ScrollView("app_drawer_scroll", {
-                dynamic_sensitivity: true,
-                momentum_scrolling: true,
-                style: {
-                    width: pct(100),
-                    height: px(vh(81.5)),
-                    overflow_hidden: true,
-                }
-            }, [
-                Container("drawer_grid_wrapper", {
-                    width: pct(100),
-                    height: "Auto",
-                    flex_direction: "Row",
-                    flex_wrap: "Wrap",
-                    justify_content: "Start",
-                    align_content: "Start",
-                    padding: padXY(vh(1.5), vw(3.0)),
-                    column_gap: gapX,
-                    row_gap: gapY,
-                }, cardItems)
-            ])
+        drawerScrollChildren.push(
+            Container("drawer_grid_wrapper", {
+                width: pct(100),
+                height: "Auto",
+                flex_direction: "Row",
+                flex_wrap: "Wrap",
+                justify_content: "Start",
+                align_content: "Start",
+                padding: padXY(vh(1.5), vw(3.0)),
+                column_gap: gapX,
+                row_gap: gapY,
+            }, cardItems)
         );
     }
 
@@ -275,5 +265,23 @@ function AppDrawerComponent() {
             duration: 0.36,
             easing: { spring: { stiffness: 220, damping: 24 } }
         }
-    }, drawerChildren);
+    }, [
+        ScrollView("app_drawer_scroll", {
+            dynamic_sensitivity: true,
+            momentum_scrolling: true,
+            style: {
+                width: pct(100),
+                height: pct(100),
+                overflow_hidden: true,
+            }
+        }, [
+            Container("drawer_content_column", {
+                width: pct(100),
+                height: "Auto",
+                flex_direction: "Column",
+                align_items: "Stretch",
+                padding: padTRBL(0, 0, vh(3.0), 0),
+            }, drawerScrollChildren)
+        ])
+    ]);
 }
