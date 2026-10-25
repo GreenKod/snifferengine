@@ -7,45 +7,47 @@ use sniffer_core::ui::event::UiEvent;
 use sniffer_core::{ScreenMetrics, Size, calculate_layout};
 use std::sync::{Arc, RwLock};
 
+struct ViewportMetrics {
+    width: f32,
+    height: f32,
+    metrics: ScreenMetrics,
+    screen_changed: bool,
+    ui_changed: bool,
+}
+
 #[allow(
-    clippy::too_many_lines,
     clippy::similar_names,
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     clippy::cast_possible_wrap
 )]
-pub fn update_and_render_state(
+fn resolve_viewport_metrics(
     app: &AndroidApp,
     state: &mut AppState,
-    root_element: &mut Element,
-    shared_render_state: &Arc<RwLock<Arc<SharedRenderState>>>,
-    dt: f32,
     mut ui_changed: bool,
-    current_ui_version: u64,
-    frame_start: std::time::Instant,
-) {
+) -> Option<ViewportMetrics> {
     let (width, height) = if let Some(window) = app.native_window() {
         (
             f32::from(u16::try_from(window.width()).expect("window width fits in u16")),
             f32::from(u16::try_from(window.height()).expect("window height fits in u16")),
         )
     } else {
-        state.cached_screen_size
+        state.layout.cached_screen_size
     };
 
     if width < 1.0 || height < 1.0 {
-        return;
+        return None;
     }
 
-    let screen_changed = (width - state.cached_screen_size.0).abs() > 0.5
-        || (height - state.cached_screen_size.1).abs() > 0.5;
+    let screen_changed = (width - state.layout.cached_screen_size.0).abs() > 0.5
+        || (height - state.layout.cached_screen_size.1).abs() > 0.5;
 
     if screen_changed {
-        state.cached_screen_size = (width, height);
-        state.cached_density = crate::jni::get_density();
-        state.cached_safe_area = crate::jni::get_safe_area(app).map_or_else(
+        state.layout.cached_screen_size = (width, height);
+        state.layout.cached_density = crate::jni::get_density();
+        state.layout.cached_safe_area = crate::jni::get_safe_area(app).map_or_else(
             || {
-                let (density, _) = state.cached_density;
+                let (density, _) = state.layout.cached_density;
                 let fallback_top = (36.0 * density).round();
                 (fallback_top, 0.0)
             },
@@ -57,31 +59,65 @@ pub fn update_and_render_state(
             },
         );
 
-        state.cached_layout = None;
-        state.cached_max_scroll.clear();
-        state.last_indicator_page = None;
+        state.layout.cached_layout = None;
+        state.physics.cached_max_scroll.clear();
+        state.physics.last_indicator_page = None;
 
         sniffer_core::types::SCREEN_WIDTH
             .store(width.to_bits(), std::sync::atomic::Ordering::Relaxed);
         sniffer_core::types::SCREEN_HEIGHT
             .store(height.to_bits(), std::sync::atomic::Ordering::Relaxed);
 
-        state.plugin_registry.broadcast("dock.stateChanged", "{}");
-        state.plugin_registry.broadcast("dock.ready", "{}");
-        state.plugin_registry.broadcast("system.resized", "{}");
+        state
+            .runtime
+            .plugin_registry
+            .broadcast("dock.stateChanged", "{}");
+        state.runtime.plugin_registry.broadcast("dock.ready", "{}");
+        state
+            .runtime
+            .plugin_registry
+            .broadcast("system.resized", "{}");
 
         ui_changed = true;
     }
 
-    let is_first_frame =
-        matches!(root_element, Element::Container { children, .. } if children.is_empty());
+    let (density, scaled_density) = state.layout.cached_density;
+    let metrics = ScreenMetrics::from_scale(width, height, density, scaled_density);
+
+    Some(ViewportMetrics {
+        width,
+        height,
+        metrics,
+        screen_changed,
+        ui_changed,
+    })
+}
+
+struct TreeSyncTimings {
+    #[cfg(feature = "devkit")]
+    t_build_ui: f32,
+    #[cfg(feature = "devkit")]
+    t_sync: f32,
+}
+
+#[allow(clippy::similar_names)]
+fn sync_ui_tree_and_virtualization(
+    state: &mut AppState,
+    root_element: &mut Element,
+    width: f32,
+    height: f32,
+    dt: f32,
+    ui_changed: bool,
+    screen_changed: bool,
+    is_first_frame: bool,
+) -> (bool, TreeSyncTimings) {
     #[cfg(feature = "devkit")]
     let b0 = std::time::Instant::now();
     if ui_changed || is_first_frame {
-        if let Some(new_root) = state.plugin_registry.build_ui() {
+        if let Some(new_root) = state.runtime.plugin_registry.build_ui() {
             *root_element = new_root;
-            state.cached_root_element = Arc::new(root_element.clone());
-            state.layout_dirty = true;
+            state.layout.cached_root_element = Arc::new(root_element.clone());
+            state.layout.layout_dirty = true;
         }
     }
     #[cfg(feature = "devkit")]
@@ -95,11 +131,18 @@ pub fn update_and_render_state(
     let s0 = std::time::Instant::now();
     if ui_changed || screen_changed || is_first_frame {
         state
+            .layout
             .virtual_page_manager
             .on_viewport_resized(width, height, root_element);
-        state.virtual_page_manager.virtualize_tree(root_element);
-        physics_sync::sync_scroll_physics_from_tree(root_element, &mut state.scroll_physics);
-        state.transition_manager.sync_tree(root_element);
+        state
+            .layout
+            .virtual_page_manager
+            .virtualize_tree(root_element);
+        physics_sync::sync_scroll_physics_from_tree(
+            root_element,
+            &mut state.physics.scroll_physics,
+        );
+        state.runtime.transition_manager.sync_tree(root_element);
     }
     #[cfg(feature = "devkit")]
     let t_sync = if ui_changed || screen_changed || is_first_frame {
@@ -107,19 +150,42 @@ pub fn update_and_render_state(
     } else {
         0.0_f32
     };
-    let is_animating = state.transition_manager.tick(dt) || state.transition_manager.is_animating();
+    let is_animating = state.runtime.transition_manager.tick(dt)
+        || state.runtime.transition_manager.is_animating();
 
-    let (density, scaled_density) = state.cached_density;
+    (
+        is_animating,
+        TreeSyncTimings {
+            #[cfg(feature = "devkit")]
+            t_build_ui,
+            #[cfg(feature = "devkit")]
+            t_sync,
+        },
+    )
+}
 
-    let metrics = ScreenMetrics::from_scale(width, height, density, scaled_density);
+struct LayoutResult {
+    layout_tree: Arc<sniffer_core::layout::LayoutNode>,
+    layout_recalculated: bool,
+    #[cfg(feature = "devkit")]
+    t_taffy: f32,
+}
 
-    if let Some(ref cached) = state.cached_layout {
+fn calculate_and_sync_layout(
+    state: &mut AppState,
+    root_element: &mut Element,
+    width: f32,
+    height: f32,
+    current_ui_version: u64,
+) -> LayoutResult {
+    if let Some(ref cached) = state.layout.cached_layout {
         let cached_is_landscape = cached.rect.width > cached.rect.height;
         let window_is_landscape = width > height;
         if cached_is_landscape != window_is_landscape {
-            state.cached_layout = None;
-            state.layout_dirty = true;
+            state.layout.cached_layout = None;
+            state.layout.layout_dirty = true;
             state
+                .layout
                 .virtual_page_manager
                 .invalidate_on_resize(root_element);
         }
@@ -127,29 +193,29 @@ pub fn update_and_render_state(
 
     #[cfg(feature = "devkit")]
     let mut t_taffy = 0.0_f32;
-    let layout_recalculated = state.layout_dirty || state.cached_layout.is_none();
-    let layout_tree = if !state.layout_dirty
-        && let Some(ref cached) = state.cached_layout
+    let layout_recalculated = state.layout.layout_dirty || state.layout.cached_layout.is_none();
+    let layout_tree = if !state.layout.layout_dirty
+        && let Some(ref cached) = state.layout.cached_layout
     {
         cached.clone()
     } else {
         #[cfg(feature = "devkit")]
         let l0 = std::time::Instant::now();
-        state.last_ui_version = current_ui_version;
+        state.layout.last_ui_version = current_ui_version;
         let fresh = Arc::new(calculate_layout(
             root_element,
             Size::new(width, height),
             0.0,
             0.0,
         ));
-        super::state::update_max_scroll_cache(state, root_element, &fresh);
+        super::state::update_max_scroll_cache(&mut state.physics, root_element, &fresh);
         sniffer_core::physics::sync_max_scroll_from_layout(
             root_element,
             &fresh,
-            &mut state.scroll_physics,
+            &mut state.physics.scroll_physics,
         );
-        state.cached_layout = Some(fresh.clone());
-        state.layout_dirty = false;
+        state.layout.cached_layout = Some(fresh.clone());
+        state.layout.layout_dirty = false;
         #[cfg(feature = "devkit")]
         {
             t_taffy = l0.elapsed().as_secs_f32() * 1000.0;
@@ -157,31 +223,44 @@ pub fn update_and_render_state(
         fresh
     };
 
-    #[cfg(feature = "devkit")]
-    if t_build_ui + t_sync + t_taffy > 16.0 {
-        sniffer_core::dev_log!(
-            "[MainThread Breakdown] Total: {:.1}ms (JS build_ui: {:.1}ms, Tree sync: {:.1}ms, Taffy layout: {:.1}ms)",
-            frame_start.elapsed().as_secs_f32() * 1000.0,
-            t_build_ui,
-            t_sync,
-            t_taffy
-        );
+    LayoutResult {
+        layout_tree,
+        layout_recalculated,
+        #[cfg(feature = "devkit")]
+        t_taffy,
     }
+}
 
+struct PhysicsStepResult {
+    scroll_offsets: std::collections::HashMap<u64, (f32, f32)>,
+    kinetic_active: bool,
+    physics_active: bool,
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap
+)]
+fn step_physics_and_kinetics(
+    state: &mut AppState,
+    root_element: &mut Element,
+    dt: f32,
+) -> PhysicsStepResult {
     let get_max_scroll = |target_id: Option<u64>| -> f32 {
         target_id
-            .and_then(|id| state.cached_max_scroll.get(&id).copied())
+            .and_then(|id| state.physics.cached_max_scroll.get(&id).copied())
             .unwrap_or(0.0)
     };
 
-    let kinetic_active = !state.kinetic_scrolls.is_empty();
-    state.kinetic_scrolls.retain_mut(|k| {
+    let kinetic_active = !state.physics.kinetic_scrolls.is_empty();
+    state.physics.kinetic_scrolls.retain_mut(|k| {
         if k.velocity_x.abs() > 0.5 || k.velocity_y.abs() > 0.5 {
             let (step_x, next_vx) =
                 sniffer_core::physics::step_momentum_decay(k.velocity_x, 7.62, dt);
             let (step_y, next_vy) =
                 sniffer_core::physics::step_momentum_decay(k.velocity_y, 3.6, dt);
-            state.event_bus.push(UiEvent::Scroll(
+            state.runtime.event_bus.push(UiEvent::Scroll(
                 Some(k.sv_id),
                 step_x,
                 step_y,
@@ -198,9 +277,9 @@ pub fn update_and_render_state(
 
     let mut scroll_offsets = std::collections::HashMap::new();
     let mut physics_active = false;
-    let phys_ids: Vec<u64> = state.scroll_physics.keys().copied().collect();
+    let phys_ids: Vec<u64> = state.physics.scroll_physics.keys().copied().collect();
     for sv_id in phys_ids {
-        if let Some(phys) = state.scroll_physics.get_mut(&sv_id) {
+        if let Some(phys) = state.physics.scroll_physics.get_mut(&sv_id) {
             let moved = phys.tick(dt);
             if moved || phys.is_dragging {
                 physics_active = true;
@@ -212,20 +291,19 @@ pub fn update_and_render_state(
                     let page_float = (phys.pos_x / snap_width).clamp(0.0, max_page as f32);
                     let clamped_page = page_float.round() as usize;
 
-                    let page_window_changed = state.virtual_page_manager.update_predicted_page(
-                        clamped_page,
-                        root_element,
-                        phys.vel_x,
-                    );
+                    let page_window_changed = state
+                        .layout
+                        .virtual_page_manager
+                        .update_predicted_page(clamped_page, root_element, phys.vel_x);
 
                     if page_window_changed {
-                        state.cached_layout = None;
+                        state.layout.cached_layout = None;
                     }
 
                     phys.last_snap_page = clamped_page as i32;
 
                     if phys.snap_just_completed && phys.on_snap.is_some() {
-                        state.event_bus.push(UiEvent::PageSnapped {
+                        state.runtime.event_bus.push(UiEvent::PageSnapped {
                             widget_id: sv_id,
                             page: clamped_page as i32,
                         });
@@ -242,11 +320,12 @@ pub fn update_and_render_state(
                         || phys.spring_sim_x.is_some()
                         || phys.snap_just_completed
                         || state
+                            .physics
                             .last_indicator_page
                             .is_none_or(|p| (p - target_page_float).abs() > 0.002);
 
                     if page_moved {
-                        state.last_indicator_page = Some(target_page_float);
+                        state.physics.last_indicator_page = Some(target_page_float);
                         physics_active = true;
                     }
                 }
@@ -256,44 +335,130 @@ pub fn update_and_render_state(
         }
     }
 
-    let has_events = !state.event_bus.is_empty();
+    PhysicsStepResult {
+        scroll_offsets,
+        kinetic_active,
+        physics_active,
+    }
+}
 
-    state.plugin_registry.dispatch(
-        &state.event_bus,
-        &state.style_map,
-        &state.data_map,
-        &state.action_queue,
+fn dispatch_events_and_actions(state: &AppState, app: &AndroidApp) -> bool {
+    let has_events = !state.runtime.event_bus.is_empty();
+
+    state.runtime.plugin_registry.dispatch(
+        &state.runtime.event_bus,
+        &state.runtime.style_map,
+        &state.runtime.data_map,
+        &state.runtime.action_queue,
     );
 
-    super::actions::process_android_actions(&state.action_queue, app);
+    super::actions::process_android_actions(&state.runtime.action_queue, app);
 
-    let current_warmed_up = shared_render_state.read().unwrap().shaders_warmed_up;
-    let needs_state_update = ui_changed
-        || screen_changed
-        || state.layout_dirty
-        || layout_recalculated
-        || is_animating
-        || kinetic_active
-        || physics_active
-        || has_events
-        || !current_warmed_up;
+    has_events
+}
 
+#[allow(clippy::too_many_arguments)]
+fn publish_render_snapshot_if_needed(
+    state: &mut AppState,
+    shared_render_state: &Arc<RwLock<Arc<SharedRenderState>>>,
+    layout_tree: Arc<sniffer_core::layout::LayoutNode>,
+    metrics: ScreenMetrics,
+    scroll_offsets: std::collections::HashMap<u64, (f32, f32)>,
+    current_warmed_up: bool,
+    frame_start: std::time::Instant,
+    needs_state_update: bool,
+) {
     if needs_state_update {
         let layout_end = std::time::Instant::now();
-        state.render_state_version = state.render_state_version.wrapping_add(1);
+        state.pacing.render_state_version = state.pacing.render_state_version.wrapping_add(1);
         *shared_render_state.write().unwrap() = Arc::new(SharedRenderState {
-            root_element: Arc::clone(&state.cached_root_element),
+            root_element: Arc::clone(&state.layout.cached_root_element),
             layout_tree,
             metrics,
-            style_map: state.style_map.clone(),
-            data_map: state.data_map.clone(),
-            transition_manager: state.transition_manager.clone(),
+            style_map: state.runtime.style_map.clone(),
+            data_map: state.runtime.data_map.clone(),
+            transition_manager: state.runtime.transition_manager.clone(),
             shaders_warmed_up: current_warmed_up,
-            version: state.render_state_version,
+            version: state.pacing.render_state_version,
             frame_start,
             layout_end,
             scroll_offsets,
-            page_indicator_float: state.last_indicator_page,
+            page_indicator_float: state.physics.last_indicator_page,
         });
     }
+}
+
+#[allow(clippy::similar_names)]
+pub fn update_and_render_state(
+    app: &AndroidApp,
+    state: &mut AppState,
+    root_element: &mut Element,
+    shared_render_state: &Arc<RwLock<Arc<SharedRenderState>>>,
+    dt: f32,
+    ui_changed: bool,
+    current_ui_version: u64,
+    frame_start: std::time::Instant,
+) {
+    let Some(viewport) = resolve_viewport_metrics(app, state, ui_changed) else {
+        return;
+    };
+
+    let is_first_frame =
+        matches!(root_element, Element::Container { children, .. } if children.is_empty());
+
+    let (is_animating, _timings) = sync_ui_tree_and_virtualization(
+        state,
+        root_element,
+        viewport.width,
+        viewport.height,
+        dt,
+        viewport.ui_changed,
+        viewport.screen_changed,
+        is_first_frame,
+    );
+
+    let layout_res = calculate_and_sync_layout(
+        state,
+        root_element,
+        viewport.width,
+        viewport.height,
+        current_ui_version,
+    );
+
+    #[cfg(feature = "devkit")]
+    if _timings.t_build_ui + _timings.t_sync + layout_res.t_taffy > 16.0 {
+        sniffer_core::dev_log!(
+            "[MainThread Breakdown] Total: {:.1}ms (JS build_ui: {:.1}ms, Tree sync: {:.1}ms, Taffy layout: {:.1}ms)",
+            frame_start.elapsed().as_secs_f32() * 1000.0,
+            _timings.t_build_ui,
+            _timings.t_sync,
+            layout_res.t_taffy
+        );
+    }
+
+    let phys_res = step_physics_and_kinetics(state, root_element, dt);
+
+    let has_events = dispatch_events_and_actions(state, app);
+
+    let current_warmed_up = shared_render_state.read().unwrap().shaders_warmed_up;
+    let needs_state_update = viewport.ui_changed
+        || viewport.screen_changed
+        || state.layout.layout_dirty
+        || layout_res.layout_recalculated
+        || is_animating
+        || phys_res.kinetic_active
+        || phys_res.physics_active
+        || has_events
+        || !current_warmed_up;
+
+    publish_render_snapshot_if_needed(
+        state,
+        shared_render_state,
+        layout_res.layout_tree,
+        viewport.metrics,
+        phys_res.scroll_offsets,
+        current_warmed_up,
+        frame_start,
+        needs_state_update,
+    );
 }

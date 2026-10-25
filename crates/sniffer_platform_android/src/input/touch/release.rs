@@ -17,22 +17,41 @@ pub fn handle_touch_release(
 ) -> InputStatus {
     let now = std::time::Instant::now();
     let mut tracker = sniffer_core::physics::FlingVelocityTracker::new();
-    for &(dx, dy, t) in &state.drag_history {
+    for &(dx, dy, t) in &state.input.drag_history {
         tracker.add_movement(dx, dy, t);
     }
     let (fling_vel_x, fling_vel_y) = tracker.compute_velocity(now);
 
-    let released_sv_id = state.active_scrollview_drag;
+    let released_sv_id = state.input.active_scrollview_drag;
     if let Some(sv_id) = released_sv_id {
-        if let Some(phys) = state.scroll_physics.get_mut(&sv_id) {
+        if let Some(phys) = state.physics.scroll_physics.get_mut(&sv_id) {
             if phys.snap_x.is_some() {
-                if state.gesture_axis == crate::app::state::GestureAxis::Vertical {
+                if state.input.gesture_axis == crate::app::state::GestureAxis::Vertical {
                     phys.release_drag(0.0);
                 } else {
                     phys.release_drag(fling_vel_x);
                 }
             } else {
-                phys.release_drag_y(fling_vel_y);
+                let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
+                let screen_h = f32::from_bits(
+                    sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
+                );
+                let is_bottom_nav_gesture =
+                    screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
+                if sv_id == drawer_id {
+                    if is_bottom_nav_gesture {
+                        phys.pos_y = 0.0;
+                        phys.vel_y = 0.0;
+                        phys.spring_sim_y = None;
+                    } else if phys.pos_y < 0.0 {
+                        // If pulled down into negative, let gesture classifier decide whether to dismiss or spring back
+                        phys.vel_y = 0.0;
+                    } else {
+                        phys.release_drag_y(fling_vel_y);
+                    }
+                } else {
+                    phys.release_drag_y(fling_vel_y);
+                }
             }
         } else {
             let momentum_enabled = if let Some((
@@ -48,35 +67,43 @@ pub fn handle_touch_release(
             };
 
             if momentum_enabled {
-                state.kinetic_scrolls.push(crate::app::KineticScroll {
-                    sv_id,
-                    velocity_x: fling_vel_x,
-                    velocity_y: fling_vel_y,
-                });
+                state
+                    .physics
+                    .kinetic_scrolls
+                    .push(crate::app::KineticScroll {
+                        sv_id,
+                        velocity_x: fling_vel_x,
+                        velocity_y: fling_vel_y,
+                    });
             }
         }
     }
 
-    state.active_scrollview_drag = None;
-    state.last_drag_delta = (0.0, 0.0);
-    state.drag_history.clear();
+    state.input.active_scrollview_drag = None;
+    state.input.last_drag_delta = (0.0, 0.0);
+    state.input.drag_history.clear();
 
-    let prev_hovered = state.hovered_btn.take();
+    let prev_hovered = state.input.hovered_btn.take();
     let hovered_data =
         find_hovered_button_with_scroll(root_element, layout_tree, point, &|id_opt, sx, sy| {
-            resolve_active_scroll(&state.scroll_physics, id_opt, sx, sy)
+            resolve_active_scroll(&state.physics.scroll_physics, id_opt, sx, sy)
         });
     let released_btn = hovered_data.map(|(id, _)| id);
     if let Some(prev) = prev_hovered {
-        state.event_bus.push(UiEvent::HoverEnd(prev));
+        state.runtime.event_bus.push(UiEvent::HoverEnd(prev));
     }
 
-    state.event_bus.push(UiEvent::PointerUp(released_btn));
+    state
+        .runtime
+        .event_bus
+        .push(UiEvent::PointerUp(released_btn));
 
-    let density = state.cached_density.0.max(1.0);
-    let tap_threshold = 48.0 * density;
-    let tap_dist = (point.x - state.touch_start_pos.x).hypot(point.y - state.touch_start_pos.y);
-    let is_static_tap = tap_dist < tap_threshold;
+    let density = state.layout.cached_density.0.max(1.0);
+    let is_static_tap = crate::input::gestures::GestureClassifier::is_tap(
+        state.input.touch_start_pos,
+        point,
+        density,
+    );
 
     #[cfg(feature = "devkit")]
     {
@@ -89,7 +116,7 @@ pub fn handle_touch_release(
         let target_name =
             hovered_data.map_or_else(|| "None".to_string(), |(btn, _)| format!("btn_{btn:x}"));
 
-        if let Ok(mut prof) = state.profiler.lock() {
+        if let Ok(mut prof) = state.pacing.profiler.lock() {
             prof.touch_telemetry.active_pointers = pointer_count;
             prof.touch_telemetry.gesture = gesture_name;
             prof.touch_telemetry.target_element = target_name;
@@ -102,12 +129,12 @@ pub fn handle_touch_release(
         let clicked = find_clicked_button_with_scroll(
             root_element,
             layout_tree,
-            state.touch_start_pos,
-            &|id_opt, sx, sy| resolve_active_scroll(&state.scroll_physics, id_opt, sx, sy),
+            state.input.touch_start_pos,
+            &|id_opt, sx, sy| resolve_active_scroll(&state.physics.scroll_physics, id_opt, sx, sy),
         )
         .or_else(|| {
             find_clicked_button_with_scroll(root_element, layout_tree, point, &|id_opt, sx, sy| {
-                resolve_active_scroll(&state.scroll_physics, id_opt, sx, sy)
+                resolve_active_scroll(&state.physics.scroll_physics, id_opt, sx, sy)
             })
         });
 
@@ -116,53 +143,82 @@ pub fn handle_touch_release(
                 "[Input] TAP on button id: {clicked_btn} (hex: {clicked_btn:x})"
             );
             state
+                .runtime
                 .event_bus
                 .push(UiEvent::Click(clicked_btn, rect.width, rect.height));
         } else {
             sniffer_core::dev_log!(
                 "[Input] TAP clicked outside (no button at start={:?}, end={:?})",
-                state.touch_start_pos,
+                state.input.touch_start_pos,
                 point
             );
-            state.event_bus.push(UiEvent::ClickOutside);
+            state.runtime.event_bus.push(UiEvent::ClickOutside);
         }
     } else {
-        let dy = point.y - state.touch_start_pos.y;
-        let dx = point.x - state.touch_start_pos.x;
-        let was_scrolled_down = state.active_scrollview_start_y > 10.0;
-        let vel_y_down = -fling_vel_y;
+        let current_pos_y = released_sv_id
+            .and_then(|id| state.physics.scroll_physics.get(&id))
+            .map_or(0.0, |p| p.pos_y);
+        let was_scrolled_down = state.input.active_scrollview_start_y > 30.0 * density
+            && current_pos_y > 10.0 * density;
+        let swipe_gesture = crate::input::gestures::GestureClassifier::classify_vertical_swipe(
+            state.input.touch_start_pos,
+            point,
+            fling_vel_y,
+            density,
+            state.input.gesture_axis,
+            was_scrolled_down,
+        );
 
-        let swipe_thresh = 120.0 * density;
-        let flick_thresh = 50.0 * density;
-
-        if state.gesture_axis == crate::app::state::GestureAxis::Vertical
-            || (state.gesture_axis == crate::app::state::GestureAxis::Undetermined
-                && dy.abs() > dx.abs() * 1.3)
-        {
-            if dy < 0.0 {
-                // SwipeUp: Open drawer from home screen
-                let upward_dist = -dy;
-                let is_flick = upward_dist > flick_thresh && vel_y_down < -400.0;
-                let is_drag = upward_dist >= swipe_thresh;
-                if is_flick || is_drag {
-                    state.event_bus.push(UiEvent::SwipeUp);
-                }
-            } else if !was_scrolled_down {
-                // SwipeDown: Close drawer back to home screen
-                // Only allowed when NOT scrolled down within the list of apps!
-                let downward_dist = dy;
-                let is_flick = downward_dist > flick_thresh && vel_y_down > 400.0;
-                let is_drag = downward_dist >= (swipe_thresh * 1.1);
-                if is_flick || is_drag {
-                    state.event_bus.push(UiEvent::SwipeDown);
+        match swipe_gesture {
+            Some(crate::input::gestures::VerticalSwipeGesture::SwipeUp) => {
+                let screen_h = f32::from_bits(
+                    sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
+                );
+                let is_bottom_nav_gesture =
+                    screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
+                if is_bottom_nav_gesture {
+                    state.runtime.event_bus.push(UiEvent::SwipeDown);
                     let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
-                    if let Some(phys) = state.scroll_physics.get_mut(&drawer_id) {
+                    if let Some(phys) = state.physics.scroll_physics.get_mut(&drawer_id) {
                         phys.pos_y = 0.0;
                         phys.vel_y = 0.0;
                         phys.spring_sim_y = None;
                     }
-                    if let Some(sv_id) = released_sv_id {
-                        if let Some(phys) = state.scroll_physics.get_mut(&sv_id) {
+                } else {
+                    state.runtime.event_bus.push(UiEvent::SwipeUp);
+                }
+            }
+            Some(crate::input::gestures::VerticalSwipeGesture::SwipeDown) => {
+                let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
+                let pulled_displacement = state
+                    .physics
+                    .scroll_physics
+                    .get(&drawer_id)
+                    .map_or(0.0, |p| (-p.pos_y).max(0.0));
+
+                if let Some(phys) = state.physics.scroll_physics.get_mut(&drawer_id) {
+                    phys.pos_y = 0.0;
+                    phys.vel_y = 0.0;
+                    phys.spring_sim_y = None;
+                }
+
+                if pulled_displacement > 0.0 {
+                    if let Some(anim) = state
+                        .runtime
+                        .transition_manager
+                        .states
+                        .get_mut("app_drawer_root")
+                    {
+                        anim.current_style.transform.translate_y = pulled_displacement;
+                        anim.start_style.transform.translate_y = pulled_displacement;
+                    }
+                }
+
+                state.runtime.event_bus.push(UiEvent::SwipeDown);
+
+                if let Some(sv_id) = released_sv_id {
+                    if sv_id != drawer_id {
+                        if let Some(phys) = state.physics.scroll_physics.get_mut(&sv_id) {
                             if phys.snap_x.is_none() {
                                 phys.pos_y = 0.0;
                                 phys.vel_y = 0.0;
@@ -172,18 +228,28 @@ pub fn handle_touch_release(
                     }
                 }
             }
+            None => {
+                let drawer_id = sniffer_core::ui::widget::fnv1a(b"app_drawer_scroll");
+                if released_sv_id == Some(drawer_id) {
+                    if let Some(phys) = state.physics.scroll_physics.get_mut(&drawer_id) {
+                        if phys.pos_y < 0.0 {
+                            phys.release_drag_y(0.0);
+                        }
+                    }
+                }
+            }
         }
-        state.event_bus.push(UiEvent::ClickOutside);
+        state.runtime.event_bus.push(UiEvent::ClickOutside);
     }
-    state.active_scrollview_start_y = 0.0;
-    state.gesture_axis = crate::app::state::GestureAxis::Undetermined;
+    state.input.active_scrollview_start_y = 0.0;
+    state.input.gesture_axis = crate::app::state::GestureAxis::Undetermined;
     InputStatus::Handled
 }
 
 pub fn handle_touch_cancel(state: &mut crate::app::AppState) -> InputStatus {
-    let active_id = state.active_scrollview_drag.take();
+    let active_id = state.input.active_scrollview_drag.take();
     if let Some(sv_id) = active_id {
-        if let Some(phys) = state.scroll_physics.get_mut(&sv_id) {
+        if let Some(phys) = state.physics.scroll_physics.get_mut(&sv_id) {
             if phys.snap_x.is_some() {
                 phys.release_drag(0.0);
             } else {
@@ -191,7 +257,7 @@ pub fn handle_touch_cancel(state: &mut crate::app::AppState) -> InputStatus {
             }
         }
     }
-    for phys in state.scroll_physics.values_mut() {
+    for phys in state.physics.scroll_physics.values_mut() {
         if phys.is_dragging {
             if phys.snap_x.is_some() {
                 phys.release_drag(0.0);
@@ -200,12 +266,12 @@ pub fn handle_touch_cancel(state: &mut crate::app::AppState) -> InputStatus {
             }
         }
     }
-    state.active_scrollview_start_y = 0.0;
-    state.gesture_axis = crate::app::state::GestureAxis::Undetermined;
-    state.drag_history.clear();
-    let prev_hovered = state.hovered_btn.take();
+    state.input.active_scrollview_start_y = 0.0;
+    state.input.gesture_axis = crate::app::state::GestureAxis::Undetermined;
+    state.input.drag_history.clear();
+    let prev_hovered = state.input.hovered_btn.take();
     if let Some(prev) = prev_hovered {
-        state.event_bus.push(UiEvent::HoverEnd(prev));
+        state.runtime.event_bus.push(UiEvent::HoverEnd(prev));
     }
     InputStatus::Handled
 }
@@ -253,7 +319,7 @@ pub fn handle_touch_wheel_scroll(
         let sv_id = id
             .as_deref()
             .map(|id_str| sniffer_core::ui::widget::fnv1a(id_str.as_bytes()));
-        state.event_bus.push(UiEvent::Scroll(
+        state.runtime.event_bus.push(UiEvent::Scroll(
             sv_id,
             axis_h * -20.0 * factor,
             axis_v * -20.0 * factor,

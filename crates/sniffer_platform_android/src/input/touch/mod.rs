@@ -18,19 +18,19 @@ pub fn handle_motion_event(
 
     let (delta_x, delta_y) = match motion_event.action() {
         MotionAction::Down | MotionAction::PointerDown => {
-            state.touch_start_pos = point;
-            state.last_touch_pos = point;
-            state.last_drag_delta = (0.0, 0.0);
-            state.total_touch_drag_distance = 0.0;
-            state.gesture_axis = crate::app::state::GestureAxis::Undetermined;
+            state.input.touch_start_pos = point;
+            state.input.last_touch_pos = point;
+            state.input.last_drag_delta = (0.0, 0.0);
+            state.input.total_touch_drag_distance = 0.0;
+            state.input.gesture_axis = crate::input::gestures::GestureAxis::Undetermined;
             (0.0, 0.0)
         }
         _ => {
-            let dx = -(point.x - state.last_touch_pos.x);
-            let dy = -(point.y - state.last_touch_pos.y);
-            state.last_touch_pos = point;
-            state.last_drag_delta = (dx, dy);
-            state.total_touch_drag_distance += dx.abs() + dy.abs();
+            let dx = -(point.x - state.input.last_touch_pos.x);
+            let dy = -(point.y - state.input.last_touch_pos.y);
+            state.input.last_touch_pos = point;
+            state.input.last_drag_delta = (dx, dy);
+            state.input.total_touch_drag_distance += dx.abs() + dy.abs();
             (dx, dy)
         }
     };

@@ -83,13 +83,13 @@ function Root() {
         flex_direction: isLandscape ? "Row" : "Column",
         justify_content: "Start",
         align_items: "Stretch",
-        opacity: isBottomFloor ? 0.0 : 1.0,
+        opacity: isBottomFloor ? 0.25 : 1.0,
         transform: {
-            scale: isBottomFloor ? 0.96 : 1.0,
-            translate_y: isBottomFloor ? -16.0 : 0.0,
+            scale: isBottomFloor ? 0.94 : 1.0,
+            translate_y: isBottomFloor ? -24.0 : 0.0,
         },
         transition: {
-            duration: 0.32,
+            duration: 0.24,
             easing: "ease_out"
         }
     }, homeChildren);
@@ -225,7 +225,11 @@ globalThis.onEvent = function (eventJsonString) {
 
     if (e.type === "TextInput") {
         if (state.currentFloor === "bottom" && typeof e.text === "string") {
-            state.drawerSearchQuery = (state.drawerSearchQuery || "") + e.text;
+            if (e.replace) {
+                state.drawerSearchQuery = e.text;
+            } else {
+                state.drawerSearchQuery = (state.drawerSearchQuery || "") + e.text;
+            }
             state.rebuildCardHashCache();
             SnifferUI.forceUpdate();
         }
@@ -241,14 +245,33 @@ globalThis.onEvent = function (eventJsonString) {
         return "[]";
     }
 
+    if (e.type === "ClickOutside") {
+        if (state.isSearchFocused) {
+            state.isSearchFocused = false;
+            if (typeof blurInput === "function") {
+                blurInput();
+            }
+            SnifferUI.forceUpdate();
+        }
+        return "[]";
+    }
+
     if (e.type === "Click") {
         const idStr = String(e.id || "");
+
+        // When in App Drawer (Floor 2), ignore any accidental clicks on background Floor 1 elements
+        if (state.currentFloor === "bottom") {
+            if (idStr.indexOf("p0_") === 0 || idStr.indexOf("dock_") === 0) {
+                return "[]";
+            }
+        }
 
         // Close App Drawer -> Go to Top Floor
         if (matchTargetId(idStr, [
             "drawer_close_btn",
             "drawer_close_icon",
             "drawer_handle",
+            "drawer_handle_pill",
             "drawer_handle_pill_wrapper"
         ])) {
             state.goToTopFloor();

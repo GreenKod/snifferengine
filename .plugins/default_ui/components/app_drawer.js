@@ -53,9 +53,9 @@ function AppDrawerCardComponent(app, index, isLandscape, isBottomFloor) {
             }
         },
         transition: {
-            duration: 0.35,
+            duration: 0.32,
             easing: { spring: { stiffness: 280, damping: 24 } },
-            stagger_index: Math.min(index, 24),
+            stagger_index: Math.min(index, 20),
             stagger_interval: 0.015,
         },
     }, [
@@ -152,15 +152,28 @@ function AppDrawerComponent() {
                 text_size: vmin(3.0),
                 width: "Auto",
             })
-        ]) : Container("drawer_search_spacer", { width: px(0), height: px(0) }, [])
+        ]) : Container("drawer_close_btn", {
+            width: px(vmin(5.6)),
+            height: px(vmin(5.6)),
+            background_color: hex("#20334155"),
+            border_radius: vmin(2.8),
+            justify_content: "Center",
+            align_items: "Center",
+        }, [
+            Label("drawer_close_icon", "▼", {
+                text_color: hex("#94A3B8"),
+                text_size: vmin(3.0),
+                width: "Auto",
+            })
+        ])
     ]);
 
-    const drawerChildren = [
+    const drawerScrollChildren = [
         // Drawer Handle Pill (Android tarzı üst çekme çizgisi)
-        Container("drawer_handle_pill_wrapper", {
+        Container("drawer_handle_pill", {
             width: pct(100),
-            height: px(vh(6.5)),
-            padding: padTRBL(vh(3.8), 0, 0, 0),
+            height: px(vh(5.5)),
+            padding: padTRBL(vh(2.8), 0, 0, 0),
             justify_content: "Center",
             align_items: "Center",
         }, [
@@ -184,7 +197,7 @@ function AppDrawerComponent() {
     ];
 
     if (cardItems.length === 0) {
-        drawerChildren.push(
+        drawerScrollChildren.push(
             Container("drawer_empty", {
                 width: pct(100),
                 height: px(vh(70.0)),
@@ -209,28 +222,18 @@ function AppDrawerComponent() {
         const gapX = isLandscape ? vw(1.8) : vw(2.2);
         const gapY = isLandscape ? vh(2.0) : vh(1.8);
 
-        drawerChildren.push(
-            ScrollView("app_drawer_scroll", {
-                dynamic_sensitivity: true,
-                momentum_scrolling: true,
-                style: {
-                    width: pct(100),
-                    height: px(vh(81.5)),
-                    overflow_hidden: true,
-                }
-            }, [
-                Container("drawer_grid_wrapper", {
-                    width: pct(100),
-                    height: "Auto",
-                    flex_direction: "Row",
-                    flex_wrap: "Wrap",
-                    justify_content: "Start",
-                    align_content: "Start",
-                    padding: padXY(vh(1.5), vw(3.0)),
-                    column_gap: gapX,
-                    row_gap: gapY,
-                }, cardItems)
-            ])
+        drawerScrollChildren.push(
+            Container("drawer_grid_wrapper", {
+                width: pct(100),
+                height: "Auto",
+                flex_direction: "Row",
+                flex_wrap: "Wrap",
+                justify_content: "Start",
+                align_content: "Start",
+                padding: padXY(vh(1.5), vw(3.0)),
+                column_gap: gapX,
+                row_gap: gapY,
+            }, cardItems)
         );
     }
 
@@ -258,9 +261,30 @@ function AppDrawerComponent() {
                 scale: 1.0,
             }
         },
-        transition: {
-            duration: 0.36,
-            easing: { spring: { stiffness: 220, damping: 24 } }
+        transition: isBottomFloor ? {
+            duration: 0.28,
+            easing: "ease_out"
+        } : {
+            duration: 0.22,
+            easing: "ease_out"
         }
-    }, drawerChildren);
+    }, [
+        ScrollView("app_drawer_scroll", {
+            dynamic_sensitivity: true,
+            momentum_scrolling: true,
+            style: {
+                width: pct(100),
+                height: pct(100),
+                overflow_hidden: true,
+            }
+        }, [
+            Container("drawer_content_column", {
+                width: pct(100),
+                height: "Auto",
+                flex_direction: "Column",
+                align_items: "Stretch",
+                padding: padTRBL(0, 0, vh(3.0), 0),
+            }, drawerScrollChildren)
+        ])
+    ]);
 }

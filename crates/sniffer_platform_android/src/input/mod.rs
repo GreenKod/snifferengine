@@ -1,10 +1,16 @@
 pub mod gestures;
+
+#[cfg(target_os = "android")]
 pub mod key;
+#[cfg(target_os = "android")]
 pub mod touch;
 
+#[cfg(target_os = "android")]
 use android_activity::InputStatus;
+#[cfg(target_os = "android")]
 use android_activity::input::InputEvent;
 
+#[cfg(target_os = "android")]
 pub fn handle_input_event(
     input_event: &InputEvent,
     state: &mut super::app::AppState,
