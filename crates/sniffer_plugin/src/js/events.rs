@@ -47,5 +47,19 @@ pub fn serialize_ui_event_to_json(event: &UiEvent, plugin_id: &str) -> String {
         UiEvent::SwipeUp => r#"{"type":"SwipeUp"}"#.to_string(),
         UiEvent::SwipeDown => r#"{"type":"SwipeDown"}"#.to_string(),
         UiEvent::Back => r#"{"type":"Back"}"#.to_string(),
+        UiEvent::ScrollDismiss {
+            widget_id,
+            displacement,
+            velocity,
+            action,
+        } => {
+            let action_str = match action {
+                Some(a) => format!(r#""{a}""#),
+                None => "null".to_string(),
+            };
+            format!(
+                r#"{{"type":"ScrollDismiss","widget_id":{widget_id},"displacement":{displacement},"velocity":{velocity},"action":{action_str}}}"#
+            )
+        }
     }
 }

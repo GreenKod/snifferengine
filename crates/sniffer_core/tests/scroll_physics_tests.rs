@@ -364,3 +364,31 @@ fn test_drawer_navigation_cancels_ongoing_vertical_momentum() {
     assert_eq!(drawer_phys.pos_y, 0.0);
     assert_eq!(drawer_phys.vel_y, 0.0);
 }
+
+#[test]
+fn test_scroll_physics_apply_drag_y_rubber_band() {
+    let mut phys = ScrollPhysics {
+        rubber_band: Some(0.60),
+        max_y: Some(500.0),
+        ..Default::default()
+    };
+
+    // Pull down into top overscroll
+    phys.apply_drag_y(-20.0);
+    assert_eq!(phys.pos_y, -12.0); // -20.0 * 0.60
+
+    phys.apply_drag_y(-20.0);
+    assert_eq!(phys.pos_y, -24.0); // -12.0 + (-20.0 * 0.60)
+
+    // Pull back upwards towards content
+    phys.apply_drag_y(10.0);
+    assert_eq!(phys.pos_y, -14.0); // -24.0 + 10.0 (responsive return)
+
+    // Return completely to normal content range
+    phys.apply_drag_y(30.0);
+    assert_eq!(phys.pos_y, 16.0); // -14.0 + 30.0 = 16.0
+
+    // Normal scrolling within content range
+    phys.apply_drag_y(40.0);
+    assert_eq!(phys.pos_y, 56.0);
+}

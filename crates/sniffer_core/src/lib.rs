@@ -14,7 +14,7 @@ pub mod virtualization;
 
 // Convenience re-exports
 pub use layout::{LayoutNode, calculate_layout};
-pub use math::{Point, Rect, ScreenMetrics, Size};
+pub use math::{EdgeInsets, Point, Rect, ScreenMetrics, Size};
 pub use render::{ClipRegion, Renderer};
 pub use types::{Action, Element};
 pub use vault::{DataVault, SystemTheme};

@@ -1,3 +1,55 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EdgeInsets {
+    pub top: f32,
+    pub bottom: f32,
+    pub left: f32,
+    pub right: f32,
+}
+
+impl EdgeInsets {
+    #[must_use]
+    pub const fn new(top: f32, bottom: f32, left: f32, right: f32) -> Self {
+        Self {
+            top,
+            bottom,
+            left,
+            right,
+        }
+    }
+
+    #[must_use]
+    pub const fn zero() -> Self {
+        Self {
+            top: 0.0,
+            bottom: 0.0,
+            left: 0.0,
+            right: 0.0,
+        }
+    }
+
+    #[must_use]
+    pub const fn symmetric(vertical: f32, horizontal: f32) -> Self {
+        Self {
+            top: vertical,
+            bottom: vertical,
+            left: horizontal,
+            right: horizontal,
+        }
+    }
+
+    #[must_use]
+    pub const fn all(value: f32) -> Self {
+        Self {
+            top: value,
+            bottom: value,
+            left: value,
+            right: value,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Point {
     pub x: f32,
@@ -177,5 +229,35 @@ impl ScreenMetrics {
     #[must_use]
     pub fn is_large(&self) -> bool {
         self.logical_width() >= 600.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_edge_insets_constructors() {
+        let zero = EdgeInsets::zero();
+        assert_eq!(zero.top, 0.0);
+        assert_eq!(zero.bottom, 0.0);
+
+        let custom = EdgeInsets::new(24.0, 48.0, 16.0, 16.0);
+        assert_eq!(custom.top, 24.0);
+        assert_eq!(custom.bottom, 48.0);
+        assert_eq!(custom.left, 16.0);
+        assert_eq!(custom.right, 16.0);
+
+        let sym = EdgeInsets::symmetric(32.0, 12.0);
+        assert_eq!(sym.top, 32.0);
+        assert_eq!(sym.bottom, 32.0);
+        assert_eq!(sym.left, 12.0);
+        assert_eq!(sym.right, 12.0);
+
+        let all = EdgeInsets::all(10.0);
+        assert_eq!(all.top, 10.0);
+        assert_eq!(all.bottom, 10.0);
+        assert_eq!(all.left, 10.0);
+        assert_eq!(all.right, 10.0);
     }
 }

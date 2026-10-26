@@ -4,11 +4,11 @@ use jni::objects::{JValue, JValueOwned};
 use jni::{Env, jni_sig, jni_str};
 
 #[allow(clippy::redundant_closure_for_method_calls)]
-pub fn get_safe_area(_app: &AndroidApp) -> Option<(i32, i32)> {
+pub fn get_system_insets(_app: &AndroidApp) -> Option<sniffer_core::math::EdgeInsets> {
     let jvm = vm();
 
     jvm.attach_current_thread_for_scope::<_, _, jni::errors::Error>(|env: &mut Env| {
-        let res = (|| -> Result<Option<(i32, i32)>, jni::errors::Error> {
+        let res = (|| -> Result<Option<sniffer_core::math::EdgeInsets>, jni::errors::Error> {
             let activity = context(env);
             if activity.is_null() {
                 return Ok(None);
@@ -16,6 +16,8 @@ pub fn get_safe_area(_app: &AndroidApp) -> Option<(i32, i32)> {
 
             let mut top = 0i32;
             let mut bottom = 0i32;
+            let mut left = 0i32;
+            let mut right = 0i32;
 
             let window = env
                 .call_method(
@@ -65,6 +67,18 @@ pub fn get_safe_area(_app: &AndroidApp) -> Option<(i32, i32)> {
                                         .and_then(JValueOwned::i)
                                     {
                                         bottom = b;
+                                    }
+                                    if let Ok(l) = env
+                                        .get_field(&insets_obj, jni_str!("left"), jni_sig!("I"))
+                                        .and_then(JValueOwned::i)
+                                    {
+                                        left = l;
+                                    }
+                                    if let Ok(r) = env
+                                        .get_field(&insets_obj, jni_str!("right"), jni_sig!("I"))
+                                        .and_then(JValueOwned::i)
+                                    {
+                                        right = r;
                                     }
                                 }
                             }
@@ -187,8 +201,13 @@ pub fn get_safe_area(_app: &AndroidApp) -> Option<(i32, i32)> {
                 }
             }
 
-            if top > 0 || bottom > 0 {
-                Ok(Some((top, bottom)))
+            if top > 0 || bottom > 0 || left > 0 || right > 0 {
+                Ok(Some(sniffer_core::math::EdgeInsets::new(
+                    top as f32,
+                    bottom as f32,
+                    left as f32,
+                    right as f32,
+                )))
             } else {
                 Ok(None)
             }
@@ -202,6 +221,11 @@ pub fn get_safe_area(_app: &AndroidApp) -> Option<(i32, i32)> {
     })
     .ok()
     .flatten()
+}
+
+#[allow(clippy::redundant_closure_for_method_calls)]
+pub fn get_safe_area(app: &AndroidApp) -> Option<(i32, i32)> {
+    get_system_insets(app).map(|i| (i.top as i32, i.bottom as i32))
 }
 
 pub fn request_default_launcher() -> Result<(), String> {

@@ -23,6 +23,9 @@ pub struct ScrollDismissConfig {
     /// Optional target container element ID to receive dragged displacement.
     #[serde(default)]
     pub target_container_id: Option<String>,
+    /// Optional custom action event name emitted upon dismissal.
+    #[serde(default)]
+    pub action_event: Option<String>,
 }
 
 /// Platform-agnostic UI tree node.

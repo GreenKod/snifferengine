@@ -237,13 +237,39 @@ impl ScrollPhysics {
         self.spring_sim_y = None;
         let max_limit_y = self.max_y.unwrap_or(0.0);
         let coeff = self.rubber_band.unwrap_or(RUBBER_BAND_COEFF);
-        let new_pos = self.pos_y + delta_y;
-        if new_pos < 0.0 {
-            self.pos_y = new_pos * coeff;
-        } else if new_pos > max_limit_y {
-            self.pos_y = max_limit_y + (new_pos - max_limit_y) * coeff;
+
+        if coeff <= 0.0 {
+            self.pos_y = (self.pos_y + delta_y).clamp(0.0, max_limit_y);
+            return;
+        }
+
+        if self.pos_y < 0.0 {
+            if delta_y < 0.0 {
+                // Dragging further into top overscroll
+                self.pos_y += delta_y * coeff;
+            } else {
+                // Dragging back towards content
+                let new_pos = self.pos_y + delta_y;
+                self.pos_y = new_pos.min(max_limit_y);
+            }
+        } else if self.pos_y > max_limit_y {
+            if delta_y > 0.0 {
+                // Dragging further into bottom overscroll
+                self.pos_y += delta_y * coeff;
+            } else {
+                // Dragging back towards content
+                let new_pos = self.pos_y + delta_y;
+                self.pos_y = new_pos.max(0.0);
+            }
         } else {
-            self.pos_y = new_pos;
+            let new_pos = self.pos_y + delta_y;
+            if new_pos < 0.0 {
+                self.pos_y = new_pos * coeff;
+            } else if new_pos > max_limit_y {
+                self.pos_y = max_limit_y + (new_pos - max_limit_y) * coeff;
+            } else {
+                self.pos_y = new_pos;
+            }
         }
     }
 

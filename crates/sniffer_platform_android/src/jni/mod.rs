@@ -4,4 +4,4 @@ pub mod intent;
 pub use bridge::{
     get_application_list, get_density, get_display_metrics, get_display_refresh_rate,
 };
-pub use intent::{get_safe_area, launch_action, start_view_uri};
+pub use intent::{get_safe_area, get_system_insets, launch_action, start_view_uri};

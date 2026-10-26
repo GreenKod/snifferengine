@@ -41,6 +41,7 @@ pub struct PhysicsState {
 /// Caches layout trees, display metrics, safe-area insets, and virtualized pages.
 pub struct LayoutCacheState {
     pub cached_safe_area: (f32, f32),
+    pub system_insets: sniffer_core::math::EdgeInsets,
     pub cached_density: (f32, f32),
     pub cached_screen_size: (f32, f32),
     pub cached_layout: Option<Arc<sniffer_core::layout::LayoutNode>>,
@@ -49,6 +50,25 @@ pub struct LayoutCacheState {
     pub last_ui_version: u64,
     pub virtual_page_manager: sniffer_core::virtualization::VirtualPageManager,
     pub memory_pressure_pending: bool,
+}
+
+impl LayoutCacheState {
+    /// Safe system bottom navigation / gesture exclusion height in physical pixels.
+    #[must_use]
+    pub fn bottom_nav_inset(&self) -> f32 {
+        let density = self.cached_density.0.max(1.0);
+        self.system_insets
+            .bottom
+            .max(self.cached_safe_area.1)
+            .max(48.0 * density)
+    }
+
+    /// Determines whether a Y coordinate falls within the Android bottom gesture exclusion zone.
+    #[must_use]
+    pub fn is_in_bottom_system_nav(&self, y: f32) -> bool {
+        let screen_h = self.cached_screen_size.1;
+        screen_h > 0.0 && y >= (screen_h - self.bottom_nav_inset())
+    }
 }
 
 /// Houses plugin engine, dynamic packages, animations, and IPC communication buses.
@@ -147,6 +167,7 @@ impl AppState {
             },
             layout: LayoutCacheState {
                 cached_safe_area: (0.0, 0.0),
+                system_insets: sniffer_core::math::EdgeInsets::zero(),
                 cached_density: (1.0, 1.0),
                 cached_screen_size: (0.0, 0.0),
                 cached_layout: None,

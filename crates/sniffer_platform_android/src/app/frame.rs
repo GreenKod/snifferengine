@@ -45,19 +45,14 @@ fn resolve_viewport_metrics(
     if screen_changed {
         state.layout.cached_screen_size = (width, height);
         state.layout.cached_density = crate::jni::get_density();
-        state.layout.cached_safe_area = crate::jni::get_safe_area(app).map_or_else(
-            || {
-                let (density, _) = state.layout.cached_density;
-                let fallback_top = (36.0 * density).round();
-                (fallback_top, 0.0)
-            },
-            |(top, bottom)| {
-                (
-                    f32::from(i16::try_from(top).expect("safe-area top fits in i16")),
-                    f32::from(i16::try_from(bottom).expect("safe-area bottom fits in i16")),
-                )
-            },
-        );
+        let insets = crate::jni::get_system_insets(app).unwrap_or_else(|| {
+            let (density, _) = state.layout.cached_density;
+            let fallback_top = (36.0 * density).round();
+            let fallback_bottom = (48.0 * density).round();
+            sniffer_core::math::EdgeInsets::new(fallback_top, fallback_bottom, 0.0, 0.0)
+        });
+        state.layout.cached_safe_area = (insets.top, insets.bottom);
+        state.layout.system_insets = insets;
 
         state.layout.cached_layout = None;
         state.physics.cached_max_scroll.clear();

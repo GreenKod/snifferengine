@@ -25,6 +25,13 @@ pub enum UiEvent {
     SwipeDown,
     /// Hardware or system back navigation button / gesture.
     Back,
+    /// Generic scroll container dismiss gesture triggered by overscroll.
+    ScrollDismiss {
+        widget_id: u64,
+        displacement: f32,
+        velocity: f32,
+        action: Option<String>,
+    },
 }
 
 #[derive(Default)]

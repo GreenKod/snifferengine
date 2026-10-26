@@ -32,11 +32,9 @@ pub fn handle_touch_release(
                     phys.release_drag(fling_vel_x);
                 }
             } else {
-                let screen_h = f32::from_bits(
-                    sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
-                );
-                let is_system_nav_gesture =
-                    screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
+                let is_system_nav_gesture = state
+                    .layout
+                    .is_in_bottom_system_nav(state.input.touch_start_pos.y);
                 if is_system_nav_gesture {
                     phys.pos_y = 0.0;
                     phys.vel_y = 0.0;
@@ -166,11 +164,9 @@ pub fn handle_touch_release(
 
         match swipe_gesture {
             Some(crate::input::gestures::VerticalSwipeGesture::SwipeUp) => {
-                let screen_h = f32::from_bits(
-                    sniffer_core::types::SCREEN_HEIGHT.load(std::sync::atomic::Ordering::Relaxed),
-                );
-                let is_bottom_nav_gesture =
-                    screen_h > 0.0 && state.input.touch_start_pos.y > screen_h * 0.93;
+                let is_bottom_nav_gesture = state
+                    .layout
+                    .is_in_bottom_system_nav(state.input.touch_start_pos.y);
                 if is_bottom_nav_gesture {
                     // Upward swipe starting from the bottom system navigation bar is an OS Home/Dismiss gesture
                     state.runtime.event_bus.push(UiEvent::SwipeDown);
@@ -188,6 +184,7 @@ pub fn handle_touch_release(
             Some(crate::input::gestures::VerticalSwipeGesture::SwipeDown) => {
                 let mut pulled_displacement = 0.0;
                 let mut target_container = None;
+                let mut action_name = None;
 
                 if let Some(sv_id) = released_sv_id {
                     if let Some(phys) = state.physics.scroll_physics.get_mut(&sv_id) {
@@ -199,6 +196,7 @@ pub fn handle_touch_release(
                         if let Some(cfg) = &phys.dismiss_config {
                             if cfg.direction == sniffer_core::types::DismissDirection::Down {
                                 target_container = cfg.target_container_id.clone();
+                                action_name = cfg.action_event.clone();
                             }
                         }
                     }
@@ -225,6 +223,13 @@ pub fn handle_touch_release(
                 state.runtime.event_bus.push(UiEvent::SwipeDown);
 
                 if let Some(sv_id) = released_sv_id {
+                    state.runtime.event_bus.push(UiEvent::ScrollDismiss {
+                        widget_id: sv_id,
+                        displacement: pulled_displacement,
+                        velocity: fling_vel_y,
+                        action: action_name,
+                    });
+
                     for (&id, phys) in &mut state.physics.scroll_physics {
                         if id != sv_id && phys.snap_x.is_none() {
                             phys.pos_y = 0.0;
@@ -235,11 +240,9 @@ pub fn handle_touch_release(
                 }
             }
             None => {
-                if let Some(sv_id) = released_sv_id {
-                    if let Some(phys) = state.physics.scroll_physics.get_mut(&sv_id) {
-                        if phys.pos_y < 0.0 {
-                            phys.release_drag_y(0.0);
-                        }
+                for phys in state.physics.scroll_physics.values_mut() {
+                    if phys.pos_y < 0.0 {
+                        phys.release_drag_y(0.0);
                     }
                 }
             }
@@ -263,7 +266,7 @@ pub fn handle_touch_cancel(state: &mut crate::app::AppState) -> InputStatus {
         }
     }
     for phys in state.physics.scroll_physics.values_mut() {
-        if phys.is_dragging {
+        if phys.is_dragging || phys.pos_y < 0.0 {
             if phys.snap_x.is_some() {
                 phys.release_drag(0.0);
             } else {
