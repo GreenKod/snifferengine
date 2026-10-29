@@ -66,24 +66,20 @@ fn test_standalone_non_launcher_app_elastic_scroll_and_dismiss_via_sniffer_engin
     fs::write(temp_dir.join("settings_sheet/manifest.json"), manifest_json).unwrap();
 
     // A standalone non-launcher application (Settings & Media Sheet) with zero launcher concepts
+    // and zero low-level host_set_ui / globalThis.onEvent boilerplate!
     let main_js = r#"
-        var appState = {
-            sheetOpen: true,
-            lastDismissVelocity: 0
-        };
-
-        function renderApp() {
+        function renderApp(state) {
             var children = [
-                Container("header_bar", { width: 1080, height: 80 }, [
+                Container("header_bar", { width: px(1080), height: px(80) }, [
                     Label("header_title", "System Settings", { text_size: 24 })
                 ])
             ];
 
-            if (appState.sheetOpen) {
+            if (state.sheetOpen) {
                 var items = [];
                 for (var i = 0; i < 20; i++) {
                     items.push(
-                        Container("setting_row_" + i, { width: 1000, height: 120 }, [
+                        Container("setting_row_" + i, { width: px(1000), height: px(120) }, [
                             Label("setting_label_" + i, "Option #" + i, { text_size: 18 })
                         ])
                     );
@@ -91,8 +87,8 @@ fn test_standalone_non_launcher_app_elastic_scroll_and_dismiss_via_sniffer_engin
 
                 children.push(
                     Container("settings_sheet_modal", {
-                        width: 1080,
-                        height: 1800,
+                        width: px(1080),
+                        height: px(1800),
                         opacity: 1.0,
                         transform: { translate_x: 0, translate_y: 0, scale: 1.0, rotate: 0 },
                         transition: {
@@ -110,53 +106,45 @@ fn test_standalone_non_launcher_app_elastic_scroll_and_dismiss_via_sniffer_engin
                                 target_container_id: "settings_sheet_modal",
                                 action_event: "settings_sheet_dismiss"
                             },
-                            style: { width: 1080, height: 1600, flex_direction: "Column" },
+                            style: { width: px(1080), height: px(1600), flex_direction: "Column" },
                             children: items
                         })
                     ])
                 );
             }
 
-            host_set_ui(JSON.stringify(
-                Container("standalone_app_root", {
-                    width: 1080,
-                    height: 2400,
-                    flex_direction: "Column"
-                }, children)
-            ));
+            return Container("standalone_app_root", {
+                width: px(1080),
+                height: px(2400),
+                flex_direction: "Column"
+            }, children);
         }
 
+        SnifferUI.start(renderApp, {
+            sheetOpen: true,
+            lastDismissVelocity: 0
+        });
+
         SnifferUI.onDismiss("settings_sheet_dismiss", function(e) {
-            appState.sheetOpen = false;
-            appState.lastDismissVelocity = e.velocity || 0;
-            renderApp();
+            SnifferUI.setState({
+                sheetOpen: false,
+                lastDismissVelocity: e.velocity || 0
+            });
             return true;
         });
 
         SnifferUI.onBack(function() {
-            if (appState.sheetOpen) {
-                appState.sheetOpen = false;
-                renderApp();
+            if (SnifferUI.getState().sheetOpen) {
+                SnifferUI.setState({ sheetOpen: false });
                 return true;
             }
             return false;
         });
 
-        SnifferUI.on("Click", function(e) {
-            if (SnifferUI.matchId(e.id, "header_bar")) {
-                appState.sheetOpen = true;
-                renderApp();
-                return true;
-            }
-            return false;
+        SnifferUI.on("Click", "header_bar", function() {
+            SnifferUI.setState({ sheetOpen: true });
+            return true;
         });
-
-        globalThis.onEvent = function(eventJson) {
-            SnifferUI.dispatchEvent(eventJson);
-            return "[]";
-        };
-
-        renderApp();
     "#;
     fs::write(temp_dir.join("settings_sheet/main.js"), main_js).unwrap();
 
