@@ -277,6 +277,7 @@ function AppDrawerComponent() {
                 direction: "Down",
                 threshold: 60.0,
                 target_container_id: "app_drawer_root",
+                action_event: "app_drawer_dismiss",
             },
             style: {
                 width: pct(100),

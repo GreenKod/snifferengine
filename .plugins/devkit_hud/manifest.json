@@ -15,7 +15,7 @@
   ],
   "maxMemoryMb": 8,
   "checksums": {
-    "../framework/sniffer_ui.js": "17f94ff36b386d5eae697453782897fcd026b612d25cdab74923880e2b9f593c",
+    "../framework/sniffer_ui.js": "d86c3b43b23e4cfdf033365496bd21db7fbb041619c96859fbae2bb019c4d9c8",
     "main.js": "ec595fe49d25c8ce0622ee4766e23696fadc5cd2675554812330cb82b7c2d1b0"
   }
 }
