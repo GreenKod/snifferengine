@@ -19,7 +19,7 @@ allow = [
 ]
 
 [[licenses.clarify]]
-name = "snifferlauncher"
+name = "sniffer_engine"
 expression = "Apache-2.0"
 license-files = [
     { path = "LICENSE", hash = 0x0 }
