@@ -201,11 +201,8 @@ pub fn handle_touch_release(
                                         sniffer_core::types::SCREEN_HEIGHT
                                             .load(std::sync::atomic::Ordering::Relaxed),
                                     );
-                                    if let Some(anim) = state
-                                        .runtime
-                                        .transition_manager
-                                        .states
-                                        .get_mut(target_id)
+                                    if let Some(anim) =
+                                        state.runtime.transition_manager.states.get_mut(target_id)
                                     {
                                         anim.start_style.transform.translate_y =
                                             pulled_displacement;
