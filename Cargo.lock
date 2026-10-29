@@ -1894,6 +1894,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sniffer_engine"
+version = "0.1.0"
+dependencies = [
+ "android-activity",
+ "sniffer_core",
+ "sniffer_pkg",
+ "sniffer_platform_android",
+ "sniffer_platform_desktop",
+ "sniffer_plugin",
+ "sniffer_render",
+]
+
+[[package]]
 name = "sniffer_pkg"
 version = "0.1.0"
 dependencies = [
@@ -1982,11 +1995,7 @@ name = "snifferlauncher"
 version = "0.1.0"
 dependencies = [
  "android-activity",
- "sniffer_core",
- "sniffer_platform_android",
- "sniffer_platform_desktop",
- "sniffer_plugin",
- "sniffer_render",
+ "sniffer_engine",
 ]
 
 [[package]]

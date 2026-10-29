@@ -43,22 +43,22 @@ fn test_find_clicked_button() {
 
 #[test]
 fn test_invisible_layer_and_structural_wrapper_hitbox() {
-    // A button inside drawer_grid_wrapper inside app_drawer_root
-    let drawer_card = Element::Container {
-        id: Some("drawer_card_0".to_string()),
+    // A button inside sheet_grid_wrapper inside modal_sheet_root
+    let sheet_card = Element::Container {
+        id: Some("sheet_card_0".to_string()),
         style: Style::default(),
         children: vec![],
     };
     let card_node = LayoutNode {
-        element: drawer_card.clone(),
+        element: sheet_card.clone(),
         rect: Rect::new(20.0, 50.0, 100.0, 100.0),
         children: vec![],
     };
 
     let grid_wrapper = Element::Container {
-        id: Some("drawer_grid_wrapper".to_string()),
+        id: Some("sheet_grid_wrapper".to_string()),
         style: Style::default(),
-        children: vec![drawer_card],
+        children: vec![sheet_card],
     };
     let grid_node = LayoutNode {
         element: grid_wrapper.clone(),
@@ -66,25 +66,25 @@ fn test_invisible_layer_and_structural_wrapper_hitbox() {
         children: vec![card_node],
     };
 
-    // Case 1: Drawer is invisible (opacity: 0.0)
+    // Case 1: Modal sheet is invisible (opacity: 0.0)
     let hidden_style = Style {
         opacity: 0.0,
         ..Style::default()
     };
-    let hidden_drawer_root = Element::Container {
-        id: Some("app_drawer_root".to_string()),
+    let hidden_sheet_root = Element::Container {
+        id: Some("modal_sheet_root".to_string()),
         style: hidden_style,
         children: vec![grid_wrapper.clone()],
     };
     let hidden_root_node = LayoutNode {
-        element: hidden_drawer_root.clone(),
+        element: hidden_sheet_root.clone(),
         rect: Rect::new(0.0, 0.0, 400.0, 900.0),
         children: vec![grid_node.clone()],
     };
 
-    // Touching inside drawer card while drawer is hidden -> MUST return None!
+    // Touching inside sheet card while sheet is hidden -> MUST return None!
     let hit_hidden = find_clicked_button(
-        &hidden_drawer_root,
+        &hidden_sheet_root,
         &hidden_root_node,
         Point::new(50.0, 80.0),
     );
@@ -92,39 +92,39 @@ fn test_invisible_layer_and_structural_wrapper_hitbox() {
 
     // Touching empty space of hidden grid_wrapper -> MUST return None!
     let hit_hidden_empty = find_clicked_button(
-        &hidden_drawer_root,
+        &hidden_sheet_root,
         &hidden_root_node,
         Point::new(300.0, 500.0),
     );
     assert_eq!(hit_hidden_empty, None);
 
-    // Case 2: Drawer is visible (opacity: 1.0)
-    let visible_drawer_root = Element::Container {
-        id: Some("app_drawer_root".to_string()),
+    // Case 2: Modal sheet is visible (opacity: 1.0)
+    let visible_sheet_root = Element::Container {
+        id: Some("modal_sheet_root".to_string()),
         style: Style::default(),
         children: vec![grid_wrapper],
     };
     let visible_root_node = LayoutNode {
-        element: visible_drawer_root.clone(),
+        element: visible_sheet_root.clone(),
         rect: Rect::new(0.0, 0.0, 400.0, 900.0),
         children: vec![grid_node],
     };
 
-    // Touching drawer card -> hits drawer card!
+    // Touching sheet card -> hits sheet card!
     let hit_visible_card = find_clicked_button(
-        &visible_drawer_root,
+        &visible_sheet_root,
         &visible_root_node,
         Point::new(50.0, 80.0),
     );
     assert!(hit_visible_card.is_some());
     assert_eq!(
         hit_visible_card.unwrap().0,
-        sniffer_core::ui::widget::fnv1a(b"drawer_card_0")
+        sniffer_core::ui::widget::fnv1a(b"sheet_card_0")
     );
 
-    // Touching empty space of drawer_grid_wrapper -> MUST return None (not drawer_grid_wrapper)!
+    // Touching empty space of sheet_grid_wrapper -> MUST return None (not sheet_grid_wrapper)!
     let hit_visible_empty = find_clicked_button(
-        &visible_drawer_root,
+        &visible_sheet_root,
         &visible_root_node,
         Point::new(300.0, 500.0),
     );

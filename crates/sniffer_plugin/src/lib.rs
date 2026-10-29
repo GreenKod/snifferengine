@@ -12,5 +12,7 @@ pub use logger::{
     is_console_rate_limiting_enabled, set_console_rate_limiting,
 };
 pub use registry::PluginRegistry;
+pub use rquickjs;
+pub use serde_json;
 pub use sniffer_core::{dev_err, dev_log};
 pub use r#trait::UiPlugin;

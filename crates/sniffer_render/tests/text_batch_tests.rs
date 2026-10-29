@@ -1,11 +1,11 @@
 use sniffer_render::TextBatch;
 
 #[test]
-fn test_app_drawer_120_labels_batching() {
+fn test_grid_120_labels_batching() {
     let mut batch = TextBatch::new(65_536);
     assert!(batch.is_empty());
 
-    // Mock an App Drawer with 120 apps: titles, category tags, and emoji icons
+    // Mock a dense grid view with 120 items: titles, category tags, and emoji icons
     let app_titles = [
         ("Telefon", "📞", 0xFFFF_FFFF_u32),
         ("Mesajlar", "💬", 0xFF44_AAFF_u32),

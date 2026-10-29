@@ -631,7 +631,7 @@ fn test_large_ui_tree_100_plus_elements_gc_and_memory_benchmark() {
                 }
                 return {
                     Container: {
-                        id: "app_drawer_root",
+                        id: "catalog_view_root",
                         style: {
                             flex_direction: "Column"
                         },
@@ -684,7 +684,7 @@ fn test_large_ui_tree_100_plus_elements_gc_and_memory_benchmark() {
         let tree_guard = ui_tree.lock().unwrap();
         let tree = tree_guard.as_ref().expect("ui_tree must be populated");
         if let Element::Container { id, children, .. } = tree {
-            assert_eq!(id, &Some("app_drawer_root".to_string()));
+            assert_eq!(id, &Some("catalog_view_root".to_string()));
             assert_eq!(
                 children.len(),
                 120,

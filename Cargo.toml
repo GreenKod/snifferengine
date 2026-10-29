@@ -17,22 +17,12 @@ path = "src/main.rs"
 
 [features]
 default = []
-devkit = [
-    "sniffer_core/devkit",
-    "sniffer_render/devkit",
-    "sniffer_plugin/devkit",
-    "sniffer_platform_desktop/devkit",
-    "sniffer_platform_android/devkit",
-]
+devkit = ["sniffer_engine/devkit"]
 
 [dependencies]
-sniffer_core = { path = "crates/sniffer_core" }
-sniffer_render = { path = "crates/sniffer_render" }
-sniffer_plugin = { path = "crates/sniffer_plugin" }
-sniffer_platform_desktop = { path = "crates/sniffer_platform_desktop" }
+sniffer_engine = { path = "crates/sniffer_engine" }
 
 [target.'cfg(target_os = "android")'.dependencies]
-sniffer_platform_android = { path = "crates/sniffer_platform_android" }
 android-activity = { version = "0.6.1", features = ["native-activity"] }
 
 [package.metadata.android]
@@ -150,6 +140,7 @@ members = [
     "crates/sniffer_pkg",
     "crates/sniffer_platform_android",
     "crates/sniffer_platform_desktop",
+    "crates/sniffer_engine",
     "packages/*",
 ]
 exclude = [".plugins"]
