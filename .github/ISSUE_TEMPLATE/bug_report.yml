@@ -1,0 +1,79 @@
+name: "Bug Report"
+description: Report a defect to help diagnose and resolve issues in SnifferEngine.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please provide detailed technical information to help reproduce and resolve this defect.
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Target Environment
+      description: Platform where the issue was observed.
+      options:
+        - "Android (Physical Device)"
+        - "Android (Emulator / AVD)"
+        - "Desktop Linux"
+        - "Desktop Windows"
+        - "Desktop macOS"
+    validations:
+      required: true
+
+  - type: input
+    id: version_info
+    attributes:
+      label: Version and Hardware Details
+      description: SnifferEngine commit hash, Rust version, Android version, or OS details.
+      placeholder: "e.g., SnifferEngine commit 405ebfd, Rust 1.98.0, Ubuntu 24.04"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem Description
+      description: A concise explanation of the observed defect.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: Steps to Reproduce
+      description: Specific sequence of actions or minimal code/script to trigger the issue.
+      placeholder: |
+        1. Initialize UI tree with ScrollView / Container...
+        2. Dispatch Touch / Click event...
+        3. Observe unexpected layout or rendering behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected Behavior
+      description: The expected outcome under correct operation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostic Logs and Backtraces
+      description: "Terminal outputs, logcat streams, or panic backtraces."
+      render: shell
+      placeholder: "Paste terminal or adb logcat output here..."
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues to verify this is not a duplicate.
+          required: true
+        - label: I have tested against the latest commit on `master`.
+          required: false
+

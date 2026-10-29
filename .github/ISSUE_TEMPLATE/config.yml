@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+contact_links:
+  - name: GitHub Discussions
+    url: https://github.com/GreenKod/snifferengine/discussions
+    about: Ask questions, share ideas, and discuss SnifferEngine architecture.
+  - name: Security Vulnerability Disclosure
+    url: https://github.com/GreenKod/snifferengine/security/advisories/new
+    about: Privately report critical security vulnerabilities.
+

@@ -1,0 +1,361 @@
+name: SnifferEngine Quality, Security, and Cross-Platform Check
+
+on:
+  push:
+    branches: [ '**' ]
+  pull_request:
+    branches: [ '**' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  changes:
+    name: Detect Relevant Changes
+    runs-on: ubuntu-latest
+    outputs:
+      source: ${{ steps.filter.outputs.source }}
+      ci: ${{ steps.filter.outputs.ci }}
+      docs: ${{ steps.filter.outputs.docs }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Filter Changed Files
+        id: filter
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: .github/paths.yaml
+
+  # ==========================================
+  # STAGE 1: Quick Pre-flight Checks (Parallel)
+  # ==========================================
+  pre-flight:
+    name: Pre-flight Quality & Security Gate
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.source == 'true' || needs.changes.outputs.ci == 'true'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Engine Architecture Purity Gate (No Launcher Leaks)
+        run: |
+          if grep -ri "app_drawer" crates/ framework/; then
+            echo "::error::Found launcher-specific 'app_drawer' references inside engine crates or framework!"
+            exit 1
+          fi
+          echo "Engine architecture purity verified (0 launcher-specific references)."
+
+      - name: Install and Run actionlint
+        run: |
+          bash <(curl -sL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.12 /usr/local/bin
+          actionlint -color
+
+      - name: Dependency 24h Quarantine & Supply-Chain Age Gate
+        run: python3 .github/scripts/check_dependency_age.py ${{ github.event_name == 'pull_request' && '--strict' || '' }}
+
+      - name: Secret Leak Detection (Gitleaks)
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Dependency Review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@2f920dad77d7f4f2ea876b66287b896de40dda79 # v4
+        with:
+          fail-on-severity: moderate
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
+        with:
+          toolchain: 1.98.0
+
+      - name: Check Formatting (cargo fmt)
+        run: cargo fmt --all --check
+
+      - name: Verify SnifferUI Framework JS Syntax
+        run: |
+          node --check framework/core.js
+          node --check framework/sniffer_ui.js
+
+      - name: Run Typos Spell Check
+        uses: crate-ci/typos@00f422f3b19c57bc6338715ebfe3316d38768461 # v1.50.3
+
+      - name: Run cargo-deny (Licenses & Advisories)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@422f3094be6a0843857aa008b499caaf6bce0da8 # v1.24.0
+
+      - name: Run cargo-machete (Unused Dependencies)
+        run: |
+          cargo binstall --no-confirm cargo-machete
+          cargo machete
+
+      - name: Framework Manifest & Generic App Integration Tests
+        run: |
+          cargo test --locked -p sniffer_plugin --test manifest_validation_tests
+          cargo test --locked -p sniffer_engine --test generic_app_integration_tests
+
+      - name: Fast Workspace Compilation Sanity Check
+        run: cargo check --locked --workspace
+
+  # ==========================================
+  # STAGE 2: Parallel Platform Verifications
+  # ==========================================
+
+  # Linux (Desktop) Verification
+  validate-linux:
+    name: Linux Desktop (Quality & Examples)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.source == 'true' || needs.changes.outputs.ci == 'true'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            libgl1-mesa-dri \
+            libgl1-mesa-dev \
+            mesa-utils \
+            libgtk-3-dev \
+            libasound2-dev \
+            libssl-dev \
+            pkg-config \
+            build-essential \
+            libx11-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            cmake
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
+        with:
+          toolchain: 1.98.0
+          components: clippy
+
+      - name: Cache Dependencies and Build Artifacts
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: linux-engine
+
+      - name: Linter Analysis - Default Features (cargo clippy)
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Linter Analysis - DevKit Feature (cargo clippy)
+        run: cargo clippy --locked --workspace --all-targets --features devkit -- -D warnings
+
+      - name: Minimal Compilation Check (No Default Features)
+        run: cargo check --locked --workspace --no-default-features
+
+      - name: Run Unit & Integration Tests (cargo test)
+        run: cargo test --locked --workspace --all-features
+
+      - name: Linux Release & Examples Build
+        run: cargo build --locked --release --workspace --examples
+
+      - name: Run Minimal App Example Smoke Check
+        run: cargo run --locked --release -p sniffer_engine --example minimal_app
+
+  # Windows (Native MSVC) Verification
+  validate-windows:
+    name: Windows Desktop (Quality & Examples)
+    runs-on: windows-latest
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.source == 'true' || needs.changes.outputs.ci == 'true'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
+        with:
+          toolchain: 1.98.0
+          components: clippy
+
+      - name: Cache Dependencies
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: windows-engine
+
+      - name: Windows Linter Analysis - Default Features (cargo clippy)
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Windows Linter Analysis - DevKit Feature (cargo clippy)
+        run: cargo clippy --locked --workspace --all-targets --features devkit -- -D warnings
+
+      - name: Windows Minimal Compilation Check (No Default Features)
+        run: cargo check --locked --workspace --no-default-features
+
+      - name: Windows Unit & Integration Tests (cargo test)
+        run: cargo test --locked --workspace --all-features
+
+      - name: Windows Release & Examples Build
+        run: cargo build --locked --release --workspace --examples
+
+      - name: Run Minimal App Example Smoke Check
+        run: cargo run --locked --release -p sniffer_engine --example minimal_app
+
+  # macOS verification on Apple Silicon
+  validate-macos-aarch64:
+    name: macOS Desktop (Quality & Examples)
+    runs-on: macos-14
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.source == 'true' || needs.changes.outputs.ci == 'true'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install System Dependencies
+        run: brew install pkg-config
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
+        with:
+          toolchain: 1.98.0
+          targets: aarch64-apple-darwin
+          components: clippy
+
+      - name: Cache Dependencies
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: macos-arm64-engine
+
+      - name: macOS Linter Analysis - Default Features (cargo clippy)
+        run: cargo clippy --locked --workspace --all-targets --target aarch64-apple-darwin -- -D warnings
+
+      - name: macOS Linter Analysis - DevKit Feature (cargo clippy)
+        run: cargo clippy --locked --workspace --all-targets --features devkit --target aarch64-apple-darwin -- -D warnings
+
+      - name: macOS Minimal Compilation Check (No Default Features)
+        run: cargo check --locked --workspace --no-default-features --target aarch64-apple-darwin
+
+      - name: macOS Unit & Integration Tests (cargo test)
+        run: cargo test --locked --workspace --all-features --target aarch64-apple-darwin
+
+      - name: macOS Workspace Release & Examples Build
+        run: cargo build --locked --release --workspace --examples --target aarch64-apple-darwin
+
+      - name: Run Minimal App Example Smoke Check
+        run: cargo run --locked --release -p sniffer_engine --example minimal_app --target aarch64-apple-darwin
+
+  # Android NDK Cross-Compilation & Linter Verification
+  validate-android:
+    name: Android NDK Cross-Compilation
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.source == 'true' || needs.changes.outputs.ci == 'true'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Java (JDK 17)
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools'
+
+      - name: Install Android SDK Build-Tools and NDK
+        run: |
+          sdkmanager "ndk;26.1.10909125" "build-tools;34.0.0" "platforms;android-34"
+          {
+            echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125"
+            echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.1.10909125"
+            echo "NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125"
+          } >> "$GITHUB_ENV"
+
+      - name: Setup Rust Toolchain and Android Targets
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
+        with:
+          toolchain: 1.98.0
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android, i686-linux-android
+          components: clippy
+
+      - name: Cache Dependencies
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: android-ndk-engine
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@422f3094be6a0843857aa008b499caaf6bce0da8 # v1.24.0
+
+      - name: Install cargo-ndk
+        run: cargo binstall --no-confirm cargo-ndk
+
+      - name: Android (ARM64) Check & Clippy
+        run: BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=aarch64-linux-android30" cargo ndk --target aarch64-linux-android clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Android (ARMv7) Check
+        run: BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi="--target=armv7-linux-androideabi" cargo ndk --target armv7-linux-androideabi check --locked --workspace
+
+      - name: Android (Emulator x86_64) Check & Clippy
+        run: BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android="--target=x86_64-linux-android" cargo ndk --target x86_64-linux-android clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Android (x86 32-bit) Check
+        run: BINDGEN_EXTRA_CLANG_ARGS_i686_linux_android="--target=i686-linux-android" cargo ndk --target i686-linux-android check --locked --workspace
+
+  # ==========================================
+  # STAGE 3: Consolidated Branch Protection Gate
+  # ==========================================
+  ci-gate:
+    name: CI Quality Gate (Branch Protection)
+    runs-on: ubuntu-latest
+    needs: [changes, pre-flight, validate-linux, validate-windows, validate-macos-aarch64, validate-android]
+    if: always()
+    steps:
+      - name: Consolidate Quality Gates
+        run: |
+          echo "=========================================================="
+          echo " 🛡️ SnifferEngine CI Quality Gate Status Check"
+          echo "=========================================================="
+          RESULTS=(
+            "Pre-flight:${{ needs.pre-flight.result }}"
+            "Linux-Desktop:${{ needs.validate-linux.result }}"
+            "Windows-Desktop:${{ needs.validate-windows.result }}"
+            "macOS-Desktop:${{ needs.validate-macos-aarch64.result }}"
+            "Android-NDK:${{ needs.validate-android.result }}"
+          )
+
+          FAILED=0
+          for entry in "${RESULTS[@]}"; do
+            JOB="${entry%%:*}"
+            STATUS="${entry##*:}"
+            echo "Gate '$JOB' -> $STATUS"
+            if [ "$STATUS" = "failure" ] || [ "$STATUS" = "cancelled" ]; then
+              echo "::error::Quality Gate '$JOB' failed or was cancelled!"
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "❌ CI Quality Gate FAILED: One or more required platform checks failed."
+            exit 1
+          fi
+
+          echo "✅ All required SnifferEngine quality gates PASSED or were cleanly skipped!"
+
