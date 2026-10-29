@@ -11,9 +11,9 @@ use std::time::{Duration, Instant};
 
 fn get_framework_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../.plugins/framework")
+        .join("../../framework")
         .canonicalize()
-        .expect("Could not find .plugins/framework directory")
+        .expect("Could not find framework directory")
 }
 
 fn find_element<'a>(el: &'a Element, target_id: &str) -> Option<&'a Element> {

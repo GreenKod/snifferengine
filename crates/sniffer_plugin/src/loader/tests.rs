@@ -38,8 +38,8 @@ fn test_eval_framework_file_in_quickjs() {
     let rt = rquickjs::Runtime::new().unwrap();
     let ctx = rquickjs::Context::full(&rt).unwrap();
 
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../.plugins/framework/sniffer_ui.js");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../framework/sniffer_ui.js");
     if let Ok(code) = std::fs::read_to_string(&path) {
         ctx.with(|c| {
             let res = c.eval::<rquickjs::Value, _>(code.as_bytes());

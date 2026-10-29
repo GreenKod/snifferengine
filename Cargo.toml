@@ -1,53 +1,15 @@
-[package]
-name = "snifferlauncher"
-version = "0.1.0"
-edition = "2024"
-license = "Apache-2.0"
-publish = false
-default-run = "snifferlauncher-desktop"
-
-[lib]
-name = "snifferlauncher"
-path = "src/lib.rs"
-crate-type = ["rlib", "cdylib"]
-
-[[bin]]
-name = "snifferlauncher-desktop"
-path = "src/main.rs"
-
-[features]
-default = []
-devkit = ["sniffer_engine/devkit"]
-
-[dependencies]
-sniffer_engine = { path = "crates/sniffer_engine" }
-
-[target.'cfg(target_os = "android")'.dependencies]
-android-activity = { version = "0.6.1", features = ["native-activity"] }
-
-[package.metadata.android]
-package = "com.greenkod.snifferlauncher"
-build_targets = ["aarch64-linux-android"]
-assets = ".plugins"
-resources = "android/res"
-manifest = "android/AndroidManifest.xml"
-aapt_ignore_assets = "!.svn:!.git:!.ds_store:!*.scc:.*:!_*:!_"
-
-[package.metadata.android.application]
-icon = "@mipmap/ic_launcher"
-round_icon = "@mipmap/ic_launcher_round"
-label = "Sniffer Launcher"
-
-[package.metadata.android.sdk]
-min_sdk_version = 30
-target_sdk_version = 35
-compile_sdk_version = 35
-
-[package.metadata.android.signing.release]
-path = "keystores/release.keystore"
-keystore_password = "android"
-key_alias = "snifferrelease"
-key_password = "android"
+[workspace]
+resolver = "3"
+members = [
+    "crates/sniffer_core",
+    "crates/sniffer_render",
+    "crates/sniffer_plugin",
+    "crates/sniffer_pkg",
+    "crates/sniffer_platform_android",
+    "crates/sniffer_platform_desktop",
+    "crates/sniffer_engine",
+    "packages/*",
+]
 
 [profile.dev]
 opt-level = 1
@@ -111,47 +73,6 @@ cast_possible_truncation = "allow"
 cast_precision_loss = "allow"
 cast_sign_loss = "allow"
 
-[lints]
-workspace = true
-
-[[package.metadata.android.uses_permission]]
-name = "android.permission.QUERY_ALL_PACKAGES"
-
-[[package.metadata.android.uses_permission]]
-name = "android.permission.READ_EXTERNAL_STORAGE"
-
-[[package.metadata.android.uses_permission]]
-name = "android.permission.READ_MEDIA_IMAGES"
-
-[[package.metadata.android.uses_permission]]
-name = "android.permission.SET_WALLPAPER"
-
-[package.metadata.android.application.activity]
-theme = "@android:style/Theme.Wallpaper.NoTitleBar.Fullscreen"
-launch_mode = "singleTask"
-state_not_needed = "true"
-clear_task_on_launch = "true"
-
-[workspace]
-members = [
-    "crates/sniffer_core",
-    "crates/sniffer_render",
-    "crates/sniffer_plugin",
-    "crates/sniffer_pkg",
-    "crates/sniffer_platform_android",
-    "crates/sniffer_platform_desktop",
-    "crates/sniffer_engine",
-    "packages/*",
-]
-exclude = [".plugins"]
-
-[[package.metadata.android.application.activity.intent_filter]]
-actions = ["android.intent.action.MAIN"]
-categories = ["android.intent.category.HOME", "android.intent.category.DEFAULT"]
-
-[[package.metadata.android.application.activity.intent_filter]]
-actions = ["android.intent.action.MAIN"]
-categories = ["android.intent.category.LAUNCHER"]
-
 [patch.crates-io]
 android-activity = { path = "patches/android-activity" }
+

@@ -1991,14 +1991,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "snifferlauncher"
-version = "0.1.0"
-dependencies = [
- "android-activity",
- "sniffer_engine",
-]
-
-[[package]]
 name = "strict-num"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

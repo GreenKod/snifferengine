@@ -162,8 +162,8 @@ fn test_sniffer_ui_commit_shallow_dirty_check() {
     let commit_count = Arc::new(AtomicUsize::new(0));
     let commit_count_clone = commit_count.clone();
 
-    let framework_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../.plugins/framework/sniffer_ui.js");
+    let framework_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../framework/sniffer_ui.js");
     let framework_code =
         std::fs::read_to_string(&framework_path).expect("Failed to read sniffer_ui.js");
 
@@ -467,8 +467,8 @@ fn test_sniffer_ui_framework_routes_to_host_set_ui_fast_when_available() {
     let legacy_clone = legacy_call_count.clone();
     let fast_clone = fast_call_count.clone();
 
-    let framework_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../.plugins/framework/sniffer_ui.js");
+    let framework_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../framework/sniffer_ui.js");
     let framework_code =
         std::fs::read_to_string(&framework_path).expect("Failed to read sniffer_ui.js");
 
@@ -542,7 +542,7 @@ fn test_sniffer_ui_core_js_routes_to_host_set_ui_fast() {
     let fast_clone = fast_call_count.clone();
 
     let core_path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.plugins/framework/core.js");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../framework/core.js");
     let core_code = std::fs::read_to_string(&core_path).expect("Failed to read core.js");
 
     ctx.with(|c| {
