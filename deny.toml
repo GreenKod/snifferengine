@@ -1,0 +1,45 @@
+[licenses]
+unused-allowed-license = "allow"
+confidence-threshold = 0.8
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "Unlicense",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "0BSD",
+    "CC0-1.0",
+    "BSL-1.0",
+    "OFL-1.1",
+]
+
+[[licenses.clarify]]
+name = "snifferlauncher"
+expression = "Apache-2.0"
+license-files = [
+    { path = "LICENSE", hash = 0x0 }
+]
+
+[licenses.private]
+ignore = true
+
+[advisories]
+ignore = [
+    "RUSTSEC-2024-0436", # paste crate is unmaintained, but wasmi depends on it
+    "RUSTSEC-2024-0370", # unmaintained advisory
+    "RUSTSEC-2026-0192", # ttf-parser is unmaintained (transitive dependency of winit/sctk-adwaita)
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

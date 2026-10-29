@@ -1,0 +1,71 @@
+# =============================================================================
+# Sniffer Launcher - Git Ignore Configuration
+# =============================================================================
+
+# --- Rust & Build Outputs ---
+/target/
+target/
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+*.so
+*.dylib
+
+# --- Android Build & Private SDK Configuration ---
+local.properties
+**/local.properties
+# --- Build Distributions & Binaries ---
+/dist/
+dist/
+mr_builder
+mr_builder.exe
+logcat*
+*.log
+dump_*
+*.apk
+*.aab
+assets/test.png
+.plugins/**/test.*
+
+# --- Security & Private Signing Keys (Never commit to VCS) ---
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+release.keystore
+release.jks
+/keystores/
+keystores/
+
+# --- Native Data Vault & Runtime Caches ---
+**/.cache/
+.plugins/.cache/
+.plugins/*/.cache/
+target/**/.plugins/.cache/
+**/vault_*.json
+**/apps_cache.json
+*.tmp
+/scratch/
+scratch/
+
+# --- IDE & Editor Configuration ---
+.vscode/
+.idea/
+.cargo/
+*.suo
+*.user
+*.userosv
+*.sublime-workspace
+.extensions/
+
+# --- Operating System Artifacts ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Project Planning & Local Documentation ---
+/docs/
