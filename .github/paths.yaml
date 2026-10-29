@@ -1,0 +1,26 @@
+# ==============================================================================
+# SnifferEngine Path Filters
+# ==============================================================================
+# Maps file paths to category outputs for selective CI execution.
+# ==============================================================================
+
+source:
+  - 'crates/**'
+  - 'packages/**'
+  - 'patches/**'
+  - 'framework/**'
+  - 'Cargo.toml'
+  - 'Cargo.lock'
+  - 'rust-toolchain.toml'
+  - 'deny.toml'
+  - '_typos.toml'
+
+ci:
+  - '.github/**'
+  - 'scripts/**'
+
+docs:
+  - '**/*.md'
+  - 'LICENSE*'
+  - '!.gitignore'
+

@@ -1,0 +1,58 @@
+name: "Feature Request"
+description: Propose an architecture, API, physics, or rendering enhancement for SnifferEngine.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please outline your feature proposal, intended use case, and technical requirements.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: Subsystem or area related to this proposal.
+      options:
+        - "Declarative UI & Physics (sniffer_core, Layout, ScrollView, Spring Animations)"
+        - "Rendering Engine (sniffer_render, Glow/OpenGL, Shaders, Font Atlas, Blur)"
+        - "Plugin Runtime & SnifferUI Framework (sniffer_plugin, QuickJS, framework/)"
+        - "Native Dynamic Packages (sniffer_pkg, C ABI, shared libraries)"
+        - "Platform Backends (sniffer_platform_android, sniffer_platform_desktop)"
+        - "Developer Experience (DevKit HUD, hot-reload, diagnostics)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem_statement
+    attributes:
+      label: Problem Statement
+      description: A concise description of the limitation, inefficiency, or missing capability.
+      placeholder: "Current limitation..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Solution and Design
+      description: Technical description of the proposed solution, including Rust or SnifferUI API surface.
+      placeholder: "Proposed architecture or API change..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives_considered
+    attributes:
+      label: Alternatives Considered
+      description: Alternative approaches or workarounds evaluated.
+      placeholder: "Alternative approaches considered..."
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I am interested in contributing an implementation via Pull Request.
+          required: false
+
