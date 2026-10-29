@@ -1,5 +1,5 @@
 # =============================================================================
-# Sniffer Launcher - Git Ignore Configuration
+# SnifferEngine - Git Ignore Configuration
 # =============================================================================
 
 # --- Rust & Build Outputs ---
@@ -14,40 +14,19 @@ target/
 *.so
 *.dylib
 
-# --- Android Build & Private SDK Configuration ---
-local.properties
-**/local.properties
-# --- Build Distributions & Binaries ---
+# --- Build Distributions, Smoke Logs & Screenshots ---
 /dist/
 dist/
-mr_builder
-mr_builder.exe
-logcat*
 *.log
 dump_*
-*.apk
-*.aab
-assets/test.png
-.plugins/**/test.*
+*_screenshot.png
+desktop_screenshot.png
+windows_screenshot.png
+macos_screenshot.png
 
-# --- Security & Private Signing Keys (Never commit to VCS) ---
-*.keystore
-*.jks
-*.p12
-*.pem
-*.key
-release.keystore
-release.jks
-/keystores/
-keystores/
-
-# --- Native Data Vault & Runtime Caches ---
+# --- Runtime Caches & Scratch ---
 **/.cache/
-.plugins/.cache/
-.plugins/*/.cache/
-target/**/.plugins/.cache/
 **/vault_*.json
-**/apps_cache.json
 *.tmp
 /scratch/
 scratch/

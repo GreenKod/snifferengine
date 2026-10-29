@@ -1,12 +1,8 @@
 [files]
 extend-exclude = [
-    "logcat.txt",
     "*.log",
     "*.bin",
-    "*.keystore",
-    "android/res/**",
     "scratch/**",
-    ".plugins/**/.cache/**",
     "patches/**",
 ]
 
