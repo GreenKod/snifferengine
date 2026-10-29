@@ -182,54 +182,59 @@ pub fn handle_touch_release(
                 }
             }
             Some(crate::input::gestures::VerticalSwipeGesture::SwipeDown) => {
-                let mut pulled_displacement = 0.0;
-                let mut target_container = None;
-                let mut action_name = None;
-
                 if let Some(sv_id) = released_sv_id {
                     if let Some(phys) = state.physics.scroll_physics.get_mut(&sv_id) {
-                        pulled_displacement = (-phys.pos_y).max(0.0);
+                        let pulled_displacement = (-phys.pos_y).max(0.0);
                         phys.pos_y = 0.0;
                         phys.vel_y = 0.0;
                         phys.spring_sim_y = None;
 
-                        if let Some(cfg) = &phys.dismiss_config {
-                            if cfg.direction == sniffer_core::types::DismissDirection::Down {
-                                target_container = cfg.target_container_id.clone();
-                                action_name = cfg.action_event.clone();
-                            }
-                        }
-                    }
-                }
+                        let action_name = phys
+                            .dismiss_config
+                            .as_ref()
+                            .filter(|cfg| {
+                                cfg.direction == sniffer_core::types::DismissDirection::Down
+                            })
+                            .and_then(|cfg| {
+                                if let Some(target_id) = cfg.target_container_id.as_deref() {
+                                    let screen_h = f32::from_bits(
+                                        sniffer_core::types::SCREEN_HEIGHT
+                                            .load(std::sync::atomic::Ordering::Relaxed),
+                                    );
+                                    if let Some(anim) = state
+                                        .runtime
+                                        .transition_manager
+                                        .states
+                                        .get_mut(target_id)
+                                    {
+                                        anim.start_style.transform.translate_y =
+                                            pulled_displacement;
+                                        anim.current_style.transform.translate_y =
+                                            pulled_displacement;
+                                        anim.target_style.transform.translate_y = screen_h;
+                                        anim.target_style.opacity = 0.0;
+                                        anim.target_style.transition.duration = 0.22;
+                                        anim.target_style.transition.easing =
+                                            sniffer_core::style::Easing::EaseOut;
+                                        anim.time_elapsed = 0.0;
+                                        anim.is_active = true;
+                                    }
+                                }
+                                cfg.action_event.clone()
+                            });
 
-                if let Some(target_id) = target_container {
-                    let screen_h = f32::from_bits(
-                        sniffer_core::types::SCREEN_HEIGHT
-                            .load(std::sync::atomic::Ordering::Relaxed),
-                    );
-                    if let Some(anim) = state.runtime.transition_manager.states.get_mut(&target_id)
-                    {
-                        anim.start_style.transform.translate_y = pulled_displacement;
-                        anim.current_style.transform.translate_y = pulled_displacement;
-                        anim.target_style.transform.translate_y = screen_h;
-                        anim.target_style.opacity = 0.0;
-                        anim.target_style.transition.duration = 0.22;
-                        anim.target_style.transition.easing = sniffer_core::style::Easing::EaseOut;
-                        anim.time_elapsed = 0.0;
-                        anim.is_active = true;
+                        state.runtime.event_bus.push(UiEvent::ScrollDismiss {
+                            widget_id: sv_id,
+                            displacement: pulled_displacement,
+                            velocity: fling_vel_y,
+                            action: action_name,
+                        });
                     }
                 }
 
                 state.runtime.event_bus.push(UiEvent::SwipeDown);
 
                 if let Some(sv_id) = released_sv_id {
-                    state.runtime.event_bus.push(UiEvent::ScrollDismiss {
-                        widget_id: sv_id,
-                        displacement: pulled_displacement,
-                        velocity: fling_vel_y,
-                        action: action_name,
-                    });
-
                     for (&id, phys) in &mut state.physics.scroll_physics {
                         if id != sv_id && phys.snap_x.is_none() {
                             phys.pos_y = 0.0;
