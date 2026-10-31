@@ -10,10 +10,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
-
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -177,6 +173,16 @@ jobs:
       - name: Run Minimal App Example Smoke Check
         run: cargo run --locked --release -p sniffer_engine --example minimal_app
 
+      - name: Upload Linux Engine Artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-engine-binaries
+          path: |
+            target/release/examples/minimal_app
+            target/release/libpkg_scroll.so
+            target/release/libpkg_perfmon.so
+          if-no-files-found: warn
+
   # Windows (Native MSVC) Verification
   validate-windows:
     name: Windows Desktop (Quality & Examples)
@@ -215,6 +221,16 @@ jobs:
 
       - name: Run Minimal App Example Smoke Check
         run: cargo run --locked --release -p sniffer_engine --example minimal_app
+
+      - name: Upload Windows Engine Artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-engine-binaries
+          path: |
+            target/release/examples/minimal_app.exe
+            target/release/pkg_scroll.dll
+            target/release/pkg_perfmon.dll
+          if-no-files-found: warn
 
   # macOS verification on Apple Silicon
   validate-macos-aarch64:
@@ -258,6 +274,16 @@ jobs:
 
       - name: Run Minimal App Example Smoke Check
         run: cargo run --locked --release -p sniffer_engine --example minimal_app --target aarch64-apple-darwin
+
+      - name: Upload macOS Engine Artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-engine-binaries
+          path: |
+            target/aarch64-apple-darwin/release/examples/minimal_app
+            target/aarch64-apple-darwin/release/libpkg_scroll.dylib
+            target/aarch64-apple-darwin/release/libpkg_perfmon.dylib
+          if-no-files-found: warn
 
   # Android NDK Cross-Compilation & Linter Verification
   validate-android:
@@ -320,7 +346,85 @@ jobs:
         run: BINDGEN_EXTRA_CLANG_ARGS_i686_linux_android="--target=i686-linux-android" cargo ndk --target i686-linux-android check --locked --workspace
 
   # ==========================================
-  # STAGE 3: Consolidated Branch Protection Gate
+  # STAGE 3: Security & VirusTotal Artifact Scanning
+  # ==========================================
+  security-scan-artifacts:
+    name: Artifact Security Scan (VirusTotal)
+    runs-on: ubuntu-latest
+    needs: [changes, validate-linux, validate-windows, validate-macos-aarch64, validate-android]
+    if: (github.event_name == 'workflow_dispatch' || needs.changes.outputs.source == 'true' || needs.changes.outputs.ci == 'true') && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    continue-on-error: true
+    permissions:
+      actions: read
+    env:
+      VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+    steps:
+      - name: Download Windows Engine Binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: windows-engine-binaries
+          path: scan_artifacts/windows
+
+      - name: Download Linux Engine Binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: linux-engine-binaries
+          path: scan_artifacts/linux
+
+      - name: Download macOS Engine Binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: macos-engine-binaries
+          path: scan_artifacts/macos
+
+      - name: Prepare and Deduplicate Artifacts for Scanning
+        run: |
+          mkdir -p scan_prepared
+          find scan_artifacts/windows -type f \( -name "*.exe" -o -name "*.dll" \) -exec cp {} scan_prepared/ \; 2>/dev/null || true
+          find scan_artifacts/linux -type f \( -name "minimal_app" -o -name "*.so" \) -exec cp {} scan_prepared/ \; 2>/dev/null || true
+          if [ -f scan_prepared/minimal_app ]; then
+            mv scan_prepared/minimal_app scan_prepared/minimal_app-linux
+          fi
+          find scan_artifacts/macos -type f \( -name "minimal_app" -o -name "*.dylib" \) -exec cp {} scan_prepared/ \; 2>/dev/null || true
+          if [ -f scan_prepared/minimal_app ]; then
+            mv scan_prepared/minimal_app scan_prepared/minimal_app-macos
+          fi
+
+      - name: List Artifacts for Scanning
+        run: |
+          {
+            echo "### 📦 Engine Artifacts Prepared for Security Analysis"
+            echo "| Artifact File | Size |"
+            echo "|---|---|"
+            find scan_prepared -type f -exec ls -lh {} + 2>/dev/null | awk '{print "| `" $9 "` | " $5 " |"}' || echo "No artifacts found."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Scan Artifacts with VirusTotal
+        uses: crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2 # v5.0.0
+        continue-on-error: true
+        if: env.VIRUSTOTAL_API_KEY != ''
+        with:
+          vt_api_key: ${{ env.VIRUSTOTAL_API_KEY }}
+          files: |
+            scan_prepared/*
+          request_rate: 4
+
+      - name: VirusTotal Scan Notice (Skipped)
+        if: env.VIRUSTOTAL_API_KEY == ''
+        run: |
+          echo "::warning title=VirusTotal Scan Skipped::VIRUSTOTAL_API_KEY secret is not configured in repository settings. Artifact malware scanning was skipped. To activate automated binary scanning, add VIRUSTOTAL_API_KEY to Repository Secrets."
+          {
+            echo ""
+            echo "### ⚠️ VirusTotal Taraması Atlandı"
+            echo "> **Uyarı:** \`VIRUSTOTAL_API_KEY\` gizli anahtarı tanımlanmadığı için ikili dosya taraması atlandı."
+            echo "> Otomatik antivirüs taramasını aktif etmek için GitHub reponuzda **Settings > Secrets and variables > Actions** sekmesine giderek anahtarınızı ekleyebilirsiniz."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ==========================================
+  # STAGE 4: Consolidated Branch Protection Gate
   # ==========================================
   ci-gate:
     name: CI Quality Gate (Branch Protection)
