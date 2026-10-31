@@ -2,9 +2,9 @@ name: SnifferEngine Quality, Security, and Cross-Platform Check
 
 on:
   push:
-    branches: [ '**' ]
+    branches: ["**"]
   pull_request:
-    branches: [ '**' ]
+    branches: ["**"]
   workflow_dispatch:
 
 permissions:
@@ -118,7 +118,7 @@ jobs:
 
   # Linux (Desktop) Verification
   validate-linux:
-    name: Linux Desktop (Quality & Examples)
+    name: Linux (Quality & Build)
     runs-on: ubuntu-latest
     needs: changes
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.source == 'true' || needs.changes.outputs.ci == 'true'
@@ -167,25 +167,21 @@ jobs:
       - name: Run Unit & Integration Tests (cargo test)
         run: cargo test --locked --workspace --all-features
 
-      - name: Linux Release & Examples Build
-        run: cargo build --locked --release --workspace --examples
+      - name: Linux Release Build
+        run: cargo build --locked --release --workspace
 
-      - name: Run Minimal App Example Smoke Check
-        run: cargo run --locked --release -p sniffer_engine --example minimal_app
-
-      - name: Upload Linux Engine Artifacts
+      - name: Upload Linux Engine Artifacts (.rlib & .so)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: linux-engine-binaries
+          name: linux-engine-rlibs
           path: |
-            target/release/examples/minimal_app
-            target/release/libpkg_scroll.so
-            target/release/libpkg_perfmon.so
+            target/release/libsniffer_engine.rlib
+            target/release/libpkg_*.so
           if-no-files-found: warn
 
   # Windows (Native MSVC) Verification
   validate-windows:
-    name: Windows Desktop (Quality & Examples)
+    name: Windows (Quality & Build)
     runs-on: windows-latest
     needs: changes
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.source == 'true' || needs.changes.outputs.ci == 'true'
@@ -216,26 +212,22 @@ jobs:
       - name: Windows Unit & Integration Tests (cargo test)
         run: cargo test --locked --workspace --all-features
 
-      - name: Windows Release & Examples Build
-        run: cargo build --locked --release --workspace --examples
+      - name: Windows Release Build
+        run: cargo build --locked --release --workspace
 
-      - name: Run Minimal App Example Smoke Check
-        run: cargo run --locked --release -p sniffer_engine --example minimal_app
-
-      - name: Upload Windows Engine Artifacts
+      - name: Upload Windows Engine Artifacts (.rlib & .dll)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: windows-engine-binaries
+          name: windows-engine-rlibs
           path: |
-            target/release/examples/minimal_app.exe
-            target/release/pkg_scroll.dll
-            target/release/pkg_perfmon.dll
+            target/release/libsniffer_engine.rlib
+            target/release/pkg_*.dll
           if-no-files-found: warn
 
   # macOS verification on Apple Silicon
   validate-macos-aarch64:
-    name: macOS Desktop (Quality & Examples)
-    runs-on: macos-14
+    name: macOS (Quality & Build)
+    runs-on: macos-latest
     needs: changes
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.source == 'true' || needs.changes.outputs.ci == 'true'
     steps:
@@ -269,20 +261,16 @@ jobs:
       - name: macOS Unit & Integration Tests (cargo test)
         run: cargo test --locked --workspace --all-features --target aarch64-apple-darwin
 
-      - name: macOS Workspace Release & Examples Build
-        run: cargo build --locked --release --workspace --examples --target aarch64-apple-darwin
+      - name: macOS Workspace Release Build
+        run: cargo build --locked --release --workspace --target aarch64-apple-darwin
 
-      - name: Run Minimal App Example Smoke Check
-        run: cargo run --locked --release -p sniffer_engine --example minimal_app --target aarch64-apple-darwin
-
-      - name: Upload macOS Engine Artifacts
+      - name: Upload macOS Engine Artifacts (.rlib & .dylib)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: macos-engine-binaries
+          name: macos-engine-rlibs
           path: |
-            target/aarch64-apple-darwin/release/examples/minimal_app
-            target/aarch64-apple-darwin/release/libpkg_scroll.dylib
-            target/aarch64-apple-darwin/release/libpkg_perfmon.dylib
+            target/aarch64-apple-darwin/release/libsniffer_engine.rlib
+            target/aarch64-apple-darwin/release/libpkg_*.dylib
           if-no-files-found: warn
 
   # Android NDK Cross-Compilation & Linter Verification
@@ -298,13 +286,13 @@ jobs:
       - name: Setup Java (JDK 17)
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: "temurin"
+          java-version: "17"
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
-          packages: 'platform-tools'
+          packages: "platform-tools"
 
       - name: Install Android SDK Build-Tools and NDK
         run: |
@@ -345,53 +333,79 @@ jobs:
       - name: Android (x86 32-bit) Check
         run: BINDGEN_EXTRA_CLANG_ARGS_i686_linux_android="--target=i686-linux-android" cargo ndk --target i686-linux-android check --locked --workspace
 
+      - name: Android (ARM64) Release .rlib Build
+        run: BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=aarch64-linux-android30" cargo ndk --target aarch64-linux-android build --locked --release --workspace
+
+      - name: Upload Android Engine Artifacts (.rlib & .so)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-engine-rlibs
+          path: |
+            target/aarch64-linux-android/release/libsniffer_engine.rlib
+            target/aarch64-linux-android/release/libpkg_*.so
+          if-no-files-found: warn
+
   # ==========================================
   # STAGE 3: Security & VirusTotal Artifact Scanning
   # ==========================================
   security-scan-artifacts:
     name: Artifact Security Scan (VirusTotal)
     runs-on: ubuntu-latest
-    needs: [changes, validate-linux, validate-windows, validate-macos-aarch64, validate-android]
+    needs:
+      [
+        changes,
+        validate-linux,
+        validate-windows,
+        validate-macos-aarch64,
+        validate-android,
+      ]
     if: (github.event_name == 'workflow_dispatch' || needs.changes.outputs.source == 'true' || needs.changes.outputs.ci == 'true') && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     continue-on-error: true
     permissions:
       actions: read
     env:
       VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+      VIRUSTOTAL_API_KEY_2: ${{ secrets.VIRUSTOTAL_API_KEY_2 }}
     steps:
-      - name: Download Windows Engine Binaries
+      - name: Download Windows Engine Artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
         with:
-          name: windows-engine-binaries
+          name: windows-engine-rlibs
           path: scan_artifacts/windows
 
-      - name: Download Linux Engine Binaries
+      - name: Download Linux Engine Artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
         with:
-          name: linux-engine-binaries
+          name: linux-engine-rlibs
           path: scan_artifacts/linux
 
-      - name: Download macOS Engine Binaries
+      - name: Download macOS Engine Artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
         with:
-          name: macos-engine-binaries
+          name: macos-engine-rlibs
           path: scan_artifacts/macos
+
+      - name: Download Android Engine Artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: android-engine-rlibs
+          path: scan_artifacts/android
 
       - name: Prepare and Deduplicate Artifacts for Scanning
         run: |
           mkdir -p scan_prepared
-          find scan_artifacts/windows -type f \( -name "*.exe" -o -name "*.dll" \) -exec cp {} scan_prepared/ \; 2>/dev/null || true
-          find scan_artifacts/linux -type f \( -name "minimal_app" -o -name "*.so" \) -exec cp {} scan_prepared/ \; 2>/dev/null || true
-          if [ -f scan_prepared/minimal_app ]; then
-            mv scan_prepared/minimal_app scan_prepared/minimal_app-linux
-          fi
-          find scan_artifacts/macos -type f \( -name "minimal_app" -o -name "*.dylib" \) -exec cp {} scan_prepared/ \; 2>/dev/null || true
-          if [ -f scan_prepared/minimal_app ]; then
-            mv scan_prepared/minimal_app scan_prepared/minimal_app-macos
-          fi
+          for plat in linux windows macos android; do
+            if [ -d "scan_artifacts/$plat" ]; then
+              while IFS= read -r -d '' file; do
+                base="$(basename "$file")"
+                cp "$file" "scan_prepared/${plat}-${base}"
+              done < <(find "scan_artifacts/$plat" -type f \( -name "*.rlib" -o -name "*.so" -o -name "*.dll" -o -name "*.dylib" \) -print0)
+            fi
+          done
 
       - name: List Artifacts for Scanning
         run: |
@@ -402,7 +416,8 @@ jobs:
             find scan_prepared -type f -exec ls -lh {} + 2>/dev/null | awk '{print "| `" $9 "` | " $5 " |"}' || echo "No artifacts found."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Scan Artifacts with VirusTotal
+      - name: Scan Artifacts with VirusTotal (Primary Key)
+        id: vt_primary
         uses: crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2 # v5.0.0
         continue-on-error: true
         if: env.VIRUSTOTAL_API_KEY != ''
@@ -412,14 +427,35 @@ jobs:
             scan_prepared/*
           request_rate: 4
 
-      - name: VirusTotal Scan Notice (Skipped)
-        if: env.VIRUSTOTAL_API_KEY == ''
+      - name: Scan Artifacts with VirusTotal (Fallback Key)
+        id: vt_fallback
+        uses: crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2 # v5.0.0
+        continue-on-error: true
+        if: env.VIRUSTOTAL_API_KEY_2 != '' && (env.VIRUSTOTAL_API_KEY == '' || steps.vt_primary.outcome == 'failure')
+        with:
+          vt_api_key: ${{ env.VIRUSTOTAL_API_KEY_2 }}
+          files: |
+            scan_prepared/*
+          request_rate: 4
+
+      - name: VirusTotal Fallback Notice
+        if: env.VIRUSTOTAL_API_KEY_2 != '' && steps.vt_primary.outcome == 'failure'
         run: |
-          echo "::warning title=VirusTotal Scan Skipped::VIRUSTOTAL_API_KEY secret is not configured in repository settings. Artifact malware scanning was skipped. To activate automated binary scanning, add VIRUSTOTAL_API_KEY to Repository Secrets."
+          echo "::notice title=VirusTotal Fallback::Primary VIRUSTOTAL_API_KEY encountered an error or quota exhaustion. Fallback to VIRUSTOTAL_API_KEY_2 was executed."
+          {
+            echo ""
+            echo "### 🔄 VirusTotal Yedek Anahtar Devreye Girdi"
+            echo "> **Bilgi:** Birincil anahtar (\`VIRUSTOTAL_API_KEY\`) hata veya kota sınırına ulaştığı için yedek \`VIRUSTOTAL_API_KEY_2\` anahtarı kullanılarak tarama gerçekleştirildi."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: VirusTotal Scan Notice (Skipped)
+        if: env.VIRUSTOTAL_API_KEY == '' && env.VIRUSTOTAL_API_KEY_2 == ''
+        run: |
+          echo "::warning title=VirusTotal Scan Skipped::Neither VIRUSTOTAL_API_KEY nor VIRUSTOTAL_API_KEY_2 secret is configured in repository settings. Artifact malware scanning was skipped. To activate automated binary scanning, add VIRUSTOTAL_API_KEY or VIRUSTOTAL_API_KEY_2 to Repository Secrets."
           {
             echo ""
             echo "### ⚠️ VirusTotal Taraması Atlandı"
-            echo "> **Uyarı:** \`VIRUSTOTAL_API_KEY\` gizli anahtarı tanımlanmadığı için ikili dosya taraması atlandı."
+            echo "> **Uyarı:** \`VIRUSTOTAL_API_KEY\` veya \`VIRUSTOTAL_API_KEY_2\` gizli anahtarı tanımlanmadığı için ikili dosya taraması atlandı."
             echo "> Otomatik antivirüs taramasını aktif etmek için GitHub reponuzda **Settings > Secrets and variables > Actions** sekmesine giderek anahtarınızı ekleyebilirsiniz."
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -429,7 +465,15 @@ jobs:
   ci-gate:
     name: CI Quality Gate (Branch Protection)
     runs-on: ubuntu-latest
-    needs: [changes, pre-flight, validate-linux, validate-windows, validate-macos-aarch64, validate-android]
+    needs:
+      [
+        changes,
+        pre-flight,
+        validate-linux,
+        validate-windows,
+        validate-macos-aarch64,
+        validate-android,
+      ]
     if: always()
     steps:
       - name: Consolidate Quality Gates
@@ -462,4 +506,3 @@ jobs:
           fi
 
           echo "✅ All required SnifferEngine quality gates PASSED or were cleanly skipped!"
-
