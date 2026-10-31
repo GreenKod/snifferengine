@@ -32,12 +32,10 @@ All engine mechanisms must be parameterized via declarative AST properties (`Ele
 3. **Android NDK Cross-Compilation (Optional)**:
    - Android NDK r26+ and `cargo-ndk`.
 
-### Running Examples and Tests
+
+### Running Tests
 
 ```bash
-# Run the minimal standalone engine example
-cargo run -p sniffer_engine --example minimal_app
-
 # Run the full local pre-flight check suite
 ./scripts/check.sh
 ```
@@ -74,4 +72,3 @@ cargo fmt --all --check
    - All framework and plugin scripts must validate against SHA-256 digests declared in `manifest.json`.
 3. **Native Dynamic Packages (`ADR 001`)**:
    - Shared libraries (`.so` / `.dll`) must adhere to the versioned C ABI contract (`"SNIF"` magic bytes, `abi_version == 1`) and pass cryptographic SHA-256 verification before loading.
-

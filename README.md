@@ -40,18 +40,18 @@ flowchart TD
 
 ### Workspace Crates
 
-| Crate / Directory | Responsibility |
-| --- | --- |
-| [`crates/sniffer_engine`](crates/sniffer_engine) | Unified public facade crate (`core`, `render`, `plugin`, `pkg`, `platform`, `prelude`). |
-| [`crates/sniffer_core`](crates/sniffer_core) | Platform-agnostic UI AST (`Element`), Flexbox layout (`Taffy`), 120Hz scroll/spring physics, and `DataVault`. |
-| [`crates/sniffer_render`](crates/sniffer_render) | OpenGL / Glow renderer, Dual-Kawase backdrop blur, text shaping, and batching. |
-| [`crates/sniffer_plugin`](crates/sniffer_plugin) | Sandboxed QuickJS runtime, capability permission manager, watchdog, and SHA-256 manifest loader. |
-| [`crates/sniffer_pkg`](crates/sniffer_pkg) | Versioned C ABI dynamic package loader (`ADR 001`) and cryptographic package verification. |
-| [`crates/sniffer_platform_android`](crates/sniffer_platform_android) | Android `NativeActivity` event loop, multi-pointer velocity tracker, and JNI bridge. |
-| [`crates/sniffer_platform_desktop`](crates/sniffer_platform_desktop) | Desktop windowing, input simulation, and headless/visual smoke testing runner. |
-| [`packages/scroll_view`](packages/scroll_view) | Native scroll container package (`pkg_scroll`). |
-| [`packages/perf_monitor`](packages/perf_monitor) | Frame-time and memory telemetry package (`pkg_perfmon`). |
-| [`framework/`](framework) | `SnifferUI` declarative JavaScript runtime (`sniffer_ui.js`, `core.js`, `types.d.ts`). |
+| Crate / Directory                                                    | Responsibility                                                                                                |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| [`crates/sniffer_engine`](crates/sniffer_engine)                     | Unified public facade crate (`core`, `render`, `plugin`, `pkg`, `platform`, `prelude`).                       |
+| [`crates/sniffer_core`](crates/sniffer_core)                         | Platform-agnostic UI AST (`Element`), Flexbox layout (`Taffy`), 120Hz scroll/spring physics, and `DataVault`. |
+| [`crates/sniffer_render`](crates/sniffer_render)                     | OpenGL / Glow renderer, Dual-Kawase backdrop blur, text shaping, and batching.                                |
+| [`crates/sniffer_plugin`](crates/sniffer_plugin)                     | Sandboxed QuickJS runtime, capability permission manager, watchdog, and SHA-256 manifest loader.              |
+| [`crates/sniffer_pkg`](crates/sniffer_pkg)                           | Versioned C ABI dynamic package loader (`ADR 001`) and cryptographic package verification.                    |
+| [`crates/sniffer_platform_android`](crates/sniffer_platform_android) | Android `NativeActivity` event loop, multi-pointer velocity tracker, and JNI bridge.                          |
+| [`crates/sniffer_platform_desktop`](crates/sniffer_platform_desktop) | Desktop windowing, input simulation, and headless/visual smoke testing runner.                                |
+| [`packages/scroll_view`](packages/scroll_view)                       | Native scroll container package (`pkg_scroll`).                                                               |
+| [`packages/perf_monitor`](packages/perf_monitor)                     | Frame-time and memory telemetry package (`pkg_perfmon`).                                                      |
+| [`framework/`](framework)                                            | `SnifferUI` declarative JavaScript runtime (`sniffer_ui.js`, `core.js`, `types.d.ts`).                        |
 
 ---
 
@@ -90,52 +90,49 @@ fn android_main(app: AndroidApp) {
 ### 2. Building Declarative UI in JavaScript (`SnifferUI`)
 
 ```javascript
-SnifferUI.start((state) => {
+SnifferUI.start(
+  (state) => {
     return Container({
-        id: "sheet_card",
-        style: {
-            width: pct(100),
-            height: pct(100),
-            background_color: "#12131A",
-            transition: { duration: 260, spring: { stiffness: 320, damping: 26 } }
-        },
-        children: [
-            ScrollView({
-                id: "main_scroll",
-                rubber_band: 0.55,
-                dismiss_config: {
-                    direction: "Down",
-                    threshold: 75.0,
-                    target_container_id: "sheet_card",
-                    action_event: "close_sheet"
-                },
-                children: [
-                    Label({
-                        id: "counter_btn",
-                        text: "Clicks: " + state.count,
-                        style: { font_size: 20, text_color: "#FFFFFF" }
-                    })
-                ]
-            })
-        ]
+      id: "sheet_card",
+      style: {
+        width: pct(100),
+        height: pct(100),
+        background_color: "#12131A",
+        transition: { duration: 260, spring: { stiffness: 320, damping: 26 } },
+      },
+      children: [
+        ScrollView({
+          id: "main_scroll",
+          rubber_band: 0.55,
+          dismiss_config: {
+            direction: "Down",
+            threshold: 75.0,
+            target_container_id: "sheet_card",
+            action_event: "close_sheet",
+          },
+          children: [
+            Label({
+              id: "counter_btn",
+              text: "Clicks: " + state.count,
+              style: { font_size: 20, text_color: "#FFFFFF" },
+            }),
+          ],
+        }),
+      ],
     });
-}, { count: 0, sheetOpen: true });
+  },
+  { count: 0, sheetOpen: true },
+);
 
 SnifferUI.on("Click", "counter_btn", () => {
-    SnifferUI.setState({ count: SnifferUI.getState().count + 1 });
-    return true;
+  SnifferUI.setState({ count: SnifferUI.getState().count + 1 });
+  return true;
 });
 
 SnifferUI.onDismiss("close_sheet", () => {
-    SnifferUI.setState({ sheetOpen: false });
-    return true;
+  SnifferUI.setState({ sheetOpen: false });
+  return true;
 });
-```
-
-### 3. Running the Standalone Rust Example
-
-```bash
-cargo run -p sniffer_engine --example minimal_app
 ```
 
 ---
