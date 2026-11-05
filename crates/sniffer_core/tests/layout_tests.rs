@@ -420,3 +420,63 @@ fn test_layout_node_geometry_queries_and_collection() {
     assert_eq!(rects.get("btn_cancel").unwrap().x, 136.0); // 120 + 16 gap
     assert_eq!(rects.get("dialog_root").unwrap().width, 400.0);
 }
+
+#[test]
+fn test_persistent_taffy_buffer_lifecycle() {
+    use sniffer_core::layout::calculate_layout_with_taffy;
+    use taffy::TaffyTree;
+
+    let child = Element::Container {
+        id: Some("sub_item".to_string()),
+        style: Style {
+            width: Dimension::Pixels(80.0),
+            height: Dimension::Pixels(40.0),
+            ..Default::default()
+        },
+        children: vec![],
+    };
+
+    let root = Element::Container {
+        id: Some("container".to_string()),
+        style: Style {
+            width: Dimension::Pixels(300.0),
+            height: Dimension::Pixels(150.0),
+            ..Default::default()
+        },
+        children: vec![child],
+    };
+
+    let mut persistent_taffy = TaffyTree::new();
+
+    // 1. First layout pass using the persistent buffer
+    let l1 = calculate_layout_with_taffy(
+        &mut persistent_taffy,
+        &root,
+        Size::new(300.0, 150.0),
+        0.0,
+        0.0,
+    );
+    assert_eq!(l1.rect.width, 300.0);
+    assert_eq!(l1.children[0].rect.width, 80.0);
+    assert_eq!(persistent_taffy.total_node_count(), 0);
+
+    // 2. Second layout pass reusing the exact same buffer (retaining capacity)
+    let l2 = calculate_layout_with_taffy(
+        &mut persistent_taffy,
+        &root,
+        Size::new(400.0, 200.0),
+        10.0,
+        20.0,
+    );
+    assert_eq!(l2.rect.x, 10.0);
+    assert_eq!(l2.rect.y, 20.0);
+    assert_eq!(l2.children[0].rect.width, 80.0);
+    assert_eq!(persistent_taffy.total_node_count(), 0);
+
+    // 3. Consecutive thread-local calculate_layout calls (reusing internal thread-local buffer)
+    for _ in 0..10 {
+        let l_consecutive = calculate_layout(&root, Size::new(300.0, 150.0), 0.0, 0.0);
+        assert_eq!(l_consecutive.rect.width, 300.0);
+        assert_eq!(l_consecutive.children[0].rect.width, 80.0);
+    }
+}

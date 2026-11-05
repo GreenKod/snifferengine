@@ -185,10 +185,10 @@ fn build_taffy_tree(taffy: &mut TaffyTree, element: &Element, measurer: &TextMea
         Element::Container { children, .. }
         | Element::ScrollView { children, .. }
         | Element::SharedView { children, .. } => {
-            let child_nodes: Vec<_> = children
-                .iter()
-                .map(|c| build_taffy_tree(taffy, c, measurer))
-                .collect();
+            let mut child_nodes = Vec::with_capacity(children.len());
+            for c in children {
+                child_nodes.push(build_taffy_tree(taffy, c, measurer));
+            }
             taffy.new_with_children(style, &child_nodes).unwrap()
         }
         Element::Label { text, .. } => {
@@ -317,26 +317,31 @@ fn resolve_layout(
     }
 }
 
+use std::cell::RefCell;
 use std::sync::LazyLock;
 
 pub static GLOBAL_TEXT_MEASURER: LazyLock<TextMeasurer<'static>> = LazyLock::new(|| {
     TextMeasurer::new(DEFAULT_FONT).expect("Failed to load default font for measuring")
 });
 
-/// Calculates the layout for the entire UI tree.
+thread_local! {
+    static THREAD_TAFFY: RefCell<TaffyTree> = RefCell::new(TaffyTree::new());
+}
+
+/// Calculates the layout for the entire UI tree using a caller-provided reusable `TaffyTree` buffer.
 ///
-/// # Panics
-///
-/// Panics if the default font cannot be loaded for measuring text.
+/// Pre-clears the tree to guarantee a clean state and clears it upon completion to retain allocated capacity
+/// without leaking styles or nodes across calls.
 #[must_use]
-pub fn calculate_layout(
+pub fn calculate_layout_with_taffy(
+    taffy: &mut TaffyTree,
     element: &Element,
     parent_size: Size,
     x_offset: f32,
     y_offset: f32,
 ) -> LayoutNode {
-    let mut taffy = TaffyTree::new();
-    let root = build_taffy_tree(&mut taffy, element, &GLOBAL_TEXT_MEASURER);
+    taffy.clear();
+    let root = build_taffy_tree(taffy, element, &GLOBAL_TEXT_MEASURER);
 
     // Create an invisible root style to enforce parent size
     let root_style = Style {
@@ -359,5 +364,24 @@ pub fn calculate_layout(
         .unwrap();
 
     // Skip the wrapper node and just resolve the root
-    resolve_layout(&taffy, root, element, x_offset, y_offset)
+    let result = resolve_layout(taffy, root, element, x_offset, y_offset);
+    taffy.clear();
+    result
+}
+
+/// Calculates the layout for the entire UI tree using a persistent thread-local `TaffyTree` buffer.
+///
+/// # Panics
+///
+/// Panics if the default font cannot be loaded for measuring text.
+#[must_use]
+pub fn calculate_layout(
+    element: &Element,
+    parent_size: Size,
+    x_offset: f32,
+    y_offset: f32,
+) -> LayoutNode {
+    THREAD_TAFFY.with_borrow_mut(|taffy| {
+        calculate_layout_with_taffy(taffy, element, parent_size, x_offset, y_offset)
+    })
 }
