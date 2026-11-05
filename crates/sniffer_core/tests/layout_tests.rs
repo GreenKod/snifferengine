@@ -43,6 +43,10 @@ fn test_basic_container_layout() {
 
     assert_eq!(layout.rect.width, 500.0);
     assert_eq!(layout.rect.height, 500.0);
+    assert_eq!(
+        layout.widget_id,
+        Some(sniffer_core::ui::widget::fnv1a(b"root"))
+    );
     assert_eq!(layout.children.len(), 2);
 
     let c1 = &layout.children[0];
@@ -50,12 +54,20 @@ fn test_basic_container_layout() {
     assert_eq!(c1.rect.y, 0.0);
     assert_eq!(c1.rect.width, 100.0);
     assert_eq!(c1.rect.height, 50.0);
+    assert_eq!(
+        c1.widget_id,
+        Some(sniffer_core::ui::widget::fnv1a(b"child_1"))
+    );
 
     let c2 = &layout.children[1];
     assert_eq!(c2.rect.x, 0.0);
     assert_eq!(c2.rect.y, 60.0); // 50.0 + 10.0 gap
     assert_eq!(c2.rect.width, 100.0);
     assert_eq!(c2.rect.height, 50.0);
+    assert_eq!(
+        c2.widget_id,
+        Some(sniffer_core::ui::widget::fnv1a(b"child_2"))
+    );
 }
 
 #[test]

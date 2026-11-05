@@ -167,8 +167,9 @@ fn update_indicator_layout_tree(
     page_float: f32,
     vmin_px: f32,
 ) -> bool {
-    if layout_node.element.id() == Some("page_indicator_container") {
-        let is_landscape = layout_node.element.style().flex_direction == FlexDirection::Column;
+    const INDICATOR_CONTAINER_HASH: u64 = crate::ui::widget::fnv1a(b"page_indicator_container");
+    if layout_node.widget_id == Some(INDICATOR_CONTAINER_HASH) {
+        let is_landscape = layout_node.rect.height > layout_node.rect.width;
         let count = layout_node.children.len();
         if count == 0 {
             return false;
@@ -179,7 +180,7 @@ fn update_indicator_layout_tree(
         let mut layout_changed = false;
 
         for (p, child) in layout_node.children.iter_mut().enumerate() {
-            if let Some(&(rect, new_bg)) = dots.get(p) {
+            if let Some(&(rect, _new_bg)) = dots.get(p) {
                 if (child.rect.x - rect.x).abs() > 0.05
                     || (child.rect.y - rect.y).abs() > 0.05
                     || (child.rect.width - rect.width).abs() > 0.05
@@ -187,14 +188,6 @@ fn update_indicator_layout_tree(
                 {
                     child.rect = rect;
                     layout_changed = true;
-                }
-
-                if let Element::Container { style, .. } = &mut child.element {
-                    if style.background_color != Some(new_bg) {
-                        style.background_color = Some(new_bg);
-                        layout_changed = true;
-                    }
-                    style.transform.scale = 1.0;
                 }
             }
         }

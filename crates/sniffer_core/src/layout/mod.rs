@@ -5,18 +5,20 @@ use taffy::prelude::*;
 
 pub type LayoutChildren = Vec<LayoutNode>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LayoutNode {
-    pub element: Element,
+    pub node_id: usize,
+    pub widget_id: Option<u64>,
     pub rect: Rect,
     pub children: LayoutChildren,
 }
 
 impl LayoutNode {
     #[must_use]
-    pub const fn new(element: Element, rect: Rect) -> Self {
+    pub const fn new(node_id: usize, widget_id: Option<u64>, rect: Rect) -> Self {
         Self {
-            element,
+            node_id,
+            widget_id,
             rect,
             children: Vec::new(),
         }
@@ -225,8 +227,13 @@ fn resolve_layout(
         }
     }
 
+    let widget_id = element
+        .id()
+        .map(|id_str| crate::ui::widget::fnv1a(id_str.as_bytes()));
+
     LayoutNode {
-        element: element.clone(),
+        node_id: usize::from(node),
+        widget_id,
         rect,
         children,
     }

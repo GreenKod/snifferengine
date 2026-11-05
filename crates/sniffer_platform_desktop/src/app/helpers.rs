@@ -6,14 +6,20 @@ use std::collections::HashMap;
 use std::hash::BuildHasher;
 
 pub fn collect_layout_rects<'a, S: BuildHasher>(
+    element: &'a Element,
     node: &'a LayoutNode,
     map: &mut HashMap<&'a str, Rect, S>,
 ) {
-    if let Some(id) = node.element.id() {
+    if let Some(id) = element.id() {
         map.insert(id, node.rect);
     }
-    for child in &node.children {
-        collect_layout_rects(child, map);
+    if let Element::Container { children, .. }
+    | Element::ScrollView { children, .. }
+    | Element::SharedView { children, .. } = element
+    {
+        for (child_el, child_node) in children.iter().zip(&node.children) {
+            collect_layout_rects(child_el, child_node, map);
+        }
     }
 }
 
