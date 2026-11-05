@@ -339,3 +339,84 @@ fn test_style_backdrop_blur_and_tint_lifecycle() {
     assert_eq!(deserialized.backdrop_blur, 30.0);
     assert_eq!(deserialized.backdrop_tint, Some(0x8000_0000));
 }
+
+#[test]
+fn test_layout_node_geometry_queries_and_collection() {
+    use sniffer_core::layout::collect_layout_rects;
+    use sniffer_core::math::Point;
+    use sniffer_core::ui::widget::fnv1a;
+    use std::collections::HashMap;
+
+    let leaf1 = Element::Container {
+        id: Some("btn_ok".to_string()),
+        style: Style {
+            width: Dimension::Pixels(120.0),
+            height: Dimension::Pixels(48.0),
+            ..Default::default()
+        },
+        children: vec![],
+    };
+
+    let leaf2 = Element::Container {
+        id: Some("btn_cancel".to_string()),
+        style: Style {
+            width: Dimension::Pixels(120.0),
+            height: Dimension::Pixels(48.0),
+            ..Default::default()
+        },
+        children: vec![],
+    };
+
+    let root = Element::Container {
+        id: Some("dialog_root".to_string()),
+        style: Style {
+            width: Dimension::Pixels(400.0),
+            height: Dimension::Pixels(200.0),
+            flex_direction: FlexDirection::Row,
+            gap: 16.0,
+            ..Default::default()
+        },
+        children: vec![leaf1, leaf2],
+    };
+
+    let layout = calculate_layout(&root, Size::new(400.0, 200.0), 0.0, 0.0);
+
+    // 1. Verify tree metrics
+    assert_eq!(layout.count_nodes(), 3);
+    assert_eq!(layout.max_depth(), 2);
+
+    // 2. Query by widget id
+    let ok_hash = fnv1a(b"btn_ok");
+    let cancel_hash = fnv1a(b"btn_cancel");
+    let missing_hash = fnv1a(b"non_existent");
+
+    let ok_rect = layout.find_rect_by_widget_id(ok_hash);
+    assert!(ok_rect.is_some());
+    assert_eq!(ok_rect.unwrap().width, 120.0);
+    assert_eq!(ok_rect.unwrap().height, 48.0);
+
+    assert!(layout.find_node_by_widget_id(ok_hash).is_some());
+    assert!(layout.find_node_by_widget_id(cancel_hash).is_some());
+    assert!(layout.find_node_by_widget_id(missing_hash).is_none());
+
+    // 3. Deep hit-testing on pure geometry node
+    let hit_ok = layout.hit_test_deep(Point::new(50.0, 20.0));
+    assert_eq!(hit_ok.map(|(id, _)| id), Some(ok_hash));
+
+    let hit_cancel = layout.hit_test_deep(Point::new(150.0, 20.0));
+    assert_eq!(hit_cancel.map(|(id, _)| id), Some(cancel_hash));
+
+    let hit_gap = layout.hit_test_deep(Point::new(128.0, 20.0));
+    assert_eq!(hit_gap.map(|(id, _)| id), Some(fnv1a(b"dialog_root")));
+
+    let hit_outside = layout.hit_test_deep(Point::new(500.0, 500.0));
+    assert_eq!(hit_outside, None);
+
+    // 4. collect_layout_rects helper
+    let mut rects = HashMap::new();
+    collect_layout_rects(&root, &layout, &mut rects);
+    assert_eq!(rects.len(), 3);
+    assert_eq!(rects.get("btn_ok").unwrap().width, 120.0);
+    assert_eq!(rects.get("btn_cancel").unwrap().x, 136.0); // 120 + 16 gap
+    assert_eq!(rects.get("dialog_root").unwrap().width, 400.0);
+}

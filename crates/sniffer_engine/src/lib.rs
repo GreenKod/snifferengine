@@ -19,7 +19,7 @@ pub use sniffer_platform_desktop as platform;
 /// Common engine types and traits for building embedded UI applications.
 pub mod prelude {
     pub use sniffer_core::anim::{SpringConfig, SpringSimulation, TransitionManager};
-    pub use sniffer_core::layout::{LayoutNode, calculate_layout};
+    pub use sniffer_core::layout::{LayoutNode, calculate_layout, collect_layout_rects};
     pub use sniffer_core::math::{EdgeInsets, Point, Rect, ScreenMetrics, Size};
     pub use sniffer_core::physics::{
         ScrollPhysics, sync_max_scroll_from_layout, sync_scroll_physics_from_tree,
