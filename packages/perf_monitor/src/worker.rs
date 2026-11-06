@@ -14,11 +14,12 @@ pub fn spawn_worker_thread(
     mem_bits: Arc<AtomicU32>,
     vault: Arc<DataVault>,
 ) -> Result<thread::JoinHandle<()>, PackageError> {
+    let mut sys = sysinfo::System::new()
+        .map_err(|e| PackageError::Init(format!("Failed to initialize sysinfo System: {e}")))?;
+
     thread::Builder::new()
         .name("sniffer-perf-monitor".into())
         .spawn(move || {
-            let mut sys = sysinfo::System::new();
-
             // Warm-up: first refresh establishes the CPU baseline.
             sys.refresh_cpu_usage();
             thread::sleep(Duration::from_millis(200));
