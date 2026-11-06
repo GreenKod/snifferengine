@@ -1,6 +1,6 @@
 //! # SnifferEngine
 //!
-//! General-purpose, declarative 120Hz embedded UI and graphics engine.
+//! Lightweight, declarative embedded UI, physics, and graphics engine with VSync pacing.
 //! Unifies layout (`sniffer_core`), GPU rendering (`sniffer_render`), QuickJS plugin
 //! execution (`sniffer_plugin`), package management (`sniffer_pkg`), and platform backends
 //! (`sniffer_platform_desktop` / `sniffer_platform_android`) under a single facade crate.

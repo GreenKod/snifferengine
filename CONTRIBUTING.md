@@ -1,6 +1,6 @@
 # Contributing to SnifferEngine
 
-Thank you for your interest in contributing to SnifferEngine. SnifferEngine is a general-purpose, 120Hz embedded UI, physics, and graphics engine written in Rust with a sandboxed QuickJS (`SnifferUI`) plugin runtime and a stable C ABI native package architecture.
+Thank you for your interest in contributing to SnifferEngine. SnifferEngine is a lightweight, declarative embedded UI, physics, and graphics engine written in Rust with a sandboxed QuickJS (`SnifferUI`) plugin runtime and a stable C ABI native package architecture.
 
 To maintain architectural purity, performance, and security, all contributors must adhere to the guidelines below.
 
@@ -18,7 +18,7 @@ All engine mechanisms must be parameterized via declarative AST properties (`Ele
 
 - **Professional Tone**: Maintain a formal, technical, and objective communication style across issues, pull requests, and commit messages.
 - **Zero Warnings**: Code must compile with zero warnings under strict workspace `clippy` lints (`all`, `pedantic`, `nursery`, `cargo`).
-- **120Hz Hot-Path Discipline**: Avoid heap allocations (`String::clone`, `format!`, temporary `Vec`s) inside per-frame rendering (`sniffer_render`) or touch-move input loops (`sniffer_platform_android`, `sniffer_platform_desktop`). Prefer zero-copy borrows (`as_deref()`) and pre-allocated buffers.
+- **Per-Frame Hot-Path Discipline**: Avoid heap allocations (`String::clone`, `format!`, temporary `Vec`s) inside per-frame rendering (`sniffer_render`) or touch-move input loops (`sniffer_platform_android`, `sniffer_platform_desktop`). Prefer zero-copy borrows (`as_deref()`) and pre-allocated buffers.
 
 ---
 
