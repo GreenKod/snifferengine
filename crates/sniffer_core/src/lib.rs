@@ -13,7 +13,7 @@ pub mod vault;
 pub mod virtualization;
 
 // Convenience re-exports
-pub use layout::{LayoutNode, calculate_layout};
+pub use layout::{LayoutNode, calculate_layout, calculate_layout_with_taffy, collect_layout_rects};
 pub use math::{EdgeInsets, Point, Rect, ScreenMetrics, Size};
 pub use render::{ClipRegion, Renderer};
 pub use types::{Action, Element};

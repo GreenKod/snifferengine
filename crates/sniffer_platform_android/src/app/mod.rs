@@ -74,7 +74,8 @@ pub fn android_main(app: AndroidApp) {
         children: vec![],
     };
     let initial_layout = Arc::new(sniffer_core::layout::LayoutNode::new(
-        initial_root.clone(),
+        0,
+        None,
         sniffer_core::Rect {
             x: 0.0,
             y: 0.0,

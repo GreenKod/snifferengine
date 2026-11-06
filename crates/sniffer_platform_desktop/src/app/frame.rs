@@ -185,7 +185,7 @@ pub fn render_desktop_frame(
 
     if has_widgets {
         let mut layout_rects = HashMap::new();
-        collect_layout_rects(&layout_tree, &mut layout_rects);
+        collect_layout_rects(&root_element, &layout_tree, &mut layout_rects);
         if let Ok(mut reg) = app.pkg_registry.write() {
             reg.render_widgets(renderer, &layout_rects, None);
         }

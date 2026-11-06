@@ -43,6 +43,10 @@ fn test_basic_container_layout() {
 
     assert_eq!(layout.rect.width, 500.0);
     assert_eq!(layout.rect.height, 500.0);
+    assert_eq!(
+        layout.widget_id,
+        Some(sniffer_core::ui::widget::fnv1a(b"root"))
+    );
     assert_eq!(layout.children.len(), 2);
 
     let c1 = &layout.children[0];
@@ -50,12 +54,20 @@ fn test_basic_container_layout() {
     assert_eq!(c1.rect.y, 0.0);
     assert_eq!(c1.rect.width, 100.0);
     assert_eq!(c1.rect.height, 50.0);
+    assert_eq!(
+        c1.widget_id,
+        Some(sniffer_core::ui::widget::fnv1a(b"child_1"))
+    );
 
     let c2 = &layout.children[1];
     assert_eq!(c2.rect.x, 0.0);
     assert_eq!(c2.rect.y, 60.0); // 50.0 + 10.0 gap
     assert_eq!(c2.rect.width, 100.0);
     assert_eq!(c2.rect.height, 50.0);
+    assert_eq!(
+        c2.widget_id,
+        Some(sniffer_core::ui::widget::fnv1a(b"child_2"))
+    );
 }
 
 #[test]
@@ -326,4 +338,145 @@ fn test_style_backdrop_blur_and_tint_lifecycle() {
     let deserialized: Style = serde_json::from_str(&json).expect("deserialize style");
     assert_eq!(deserialized.backdrop_blur, 30.0);
     assert_eq!(deserialized.backdrop_tint, Some(0x8000_0000));
+}
+
+#[test]
+fn test_layout_node_geometry_queries_and_collection() {
+    use sniffer_core::layout::collect_layout_rects;
+    use sniffer_core::math::Point;
+    use sniffer_core::ui::widget::fnv1a;
+    use std::collections::HashMap;
+
+    let leaf1 = Element::Container {
+        id: Some("btn_ok".to_string()),
+        style: Style {
+            width: Dimension::Pixels(120.0),
+            height: Dimension::Pixels(48.0),
+            ..Default::default()
+        },
+        children: vec![],
+    };
+
+    let leaf2 = Element::Container {
+        id: Some("btn_cancel".to_string()),
+        style: Style {
+            width: Dimension::Pixels(120.0),
+            height: Dimension::Pixels(48.0),
+            ..Default::default()
+        },
+        children: vec![],
+    };
+
+    let root = Element::Container {
+        id: Some("dialog_root".to_string()),
+        style: Style {
+            width: Dimension::Pixels(400.0),
+            height: Dimension::Pixels(200.0),
+            flex_direction: FlexDirection::Row,
+            gap: 16.0,
+            ..Default::default()
+        },
+        children: vec![leaf1, leaf2],
+    };
+
+    let layout = calculate_layout(&root, Size::new(400.0, 200.0), 0.0, 0.0);
+
+    // 1. Verify tree metrics
+    assert_eq!(layout.count_nodes(), 3);
+    assert_eq!(layout.max_depth(), 2);
+
+    // 2. Query by widget id
+    let ok_hash = fnv1a(b"btn_ok");
+    let cancel_hash = fnv1a(b"btn_cancel");
+    let missing_hash = fnv1a(b"non_existent");
+
+    let ok_rect = layout.find_rect_by_widget_id(ok_hash);
+    assert!(ok_rect.is_some());
+    assert_eq!(ok_rect.unwrap().width, 120.0);
+    assert_eq!(ok_rect.unwrap().height, 48.0);
+
+    assert!(layout.find_node_by_widget_id(ok_hash).is_some());
+    assert!(layout.find_node_by_widget_id(cancel_hash).is_some());
+    assert!(layout.find_node_by_widget_id(missing_hash).is_none());
+
+    // 3. Deep hit-testing on pure geometry node
+    let hit_ok = layout.hit_test_deep(Point::new(50.0, 20.0));
+    assert_eq!(hit_ok.map(|(id, _)| id), Some(ok_hash));
+
+    let hit_cancel = layout.hit_test_deep(Point::new(150.0, 20.0));
+    assert_eq!(hit_cancel.map(|(id, _)| id), Some(cancel_hash));
+
+    let hit_gap = layout.hit_test_deep(Point::new(128.0, 20.0));
+    assert_eq!(hit_gap.map(|(id, _)| id), Some(fnv1a(b"dialog_root")));
+
+    let hit_outside = layout.hit_test_deep(Point::new(500.0, 500.0));
+    assert_eq!(hit_outside, None);
+
+    // 4. collect_layout_rects helper
+    let mut rects = HashMap::new();
+    collect_layout_rects(&root, &layout, &mut rects);
+    assert_eq!(rects.len(), 3);
+    assert_eq!(rects.get("btn_ok").unwrap().width, 120.0);
+    assert_eq!(rects.get("btn_cancel").unwrap().x, 136.0); // 120 + 16 gap
+    assert_eq!(rects.get("dialog_root").unwrap().width, 400.0);
+}
+
+#[test]
+fn test_persistent_taffy_buffer_lifecycle() {
+    use sniffer_core::layout::calculate_layout_with_taffy;
+    use taffy::TaffyTree;
+
+    let child = Element::Container {
+        id: Some("sub_item".to_string()),
+        style: Style {
+            width: Dimension::Pixels(80.0),
+            height: Dimension::Pixels(40.0),
+            ..Default::default()
+        },
+        children: vec![],
+    };
+
+    let root = Element::Container {
+        id: Some("container".to_string()),
+        style: Style {
+            width: Dimension::Pixels(300.0),
+            height: Dimension::Pixels(150.0),
+            ..Default::default()
+        },
+        children: vec![child],
+    };
+
+    let mut persistent_taffy = TaffyTree::new();
+
+    // 1. First layout pass using the persistent buffer
+    let l1 = calculate_layout_with_taffy(
+        &mut persistent_taffy,
+        &root,
+        Size::new(300.0, 150.0),
+        0.0,
+        0.0,
+    );
+    assert_eq!(l1.rect.width, 300.0);
+    assert_eq!(l1.children[0].rect.width, 80.0);
+    assert_eq!(persistent_taffy.total_node_count(), 0);
+
+    // 2. Second layout pass reusing the exact same buffer (retaining capacity)
+    let l2 = calculate_layout_with_taffy(
+        &mut persistent_taffy,
+        &root,
+        Size::new(400.0, 200.0),
+        10.0,
+        20.0,
+    );
+    assert_eq!(l2.rect.x, 10.0);
+    assert_eq!(l2.rect.y, 20.0);
+    assert_eq!(l2.children[0].rect.width, 80.0);
+    assert_eq!(persistent_taffy.total_node_count(), 0);
+
+    // 3. Consecutive thread-local calculate_layout calls (reusing internal thread-local buffer)
+    for _ in 0..10 {
+        let l_consecutive = calculate_layout(&root, Size::new(300.0, 150.0), 0.0, 0.0);
+        assert_eq!(l_consecutive.rect.width, 300.0);
+        assert_eq!(l_consecutive.children[0].rect.width, 80.0);
+    }
 }

@@ -66,15 +66,4 @@ impl sniffer_plugin::js::host_bridge::HostPlatformBridge for AndroidHostBridge {
     }
 }
 
-#[allow(clippy::implicit_hasher)]
-pub fn collect_layout_rects<'a>(
-    node: &'a sniffer_core::layout::LayoutNode,
-    map: &mut HashMap<&'a str, sniffer_core::math::Rect>,
-) {
-    if let Some(id) = node.element.id() {
-        map.insert(id, node.rect);
-    }
-    for child in &node.children {
-        collect_layout_rects(child, map);
-    }
-}
+pub use sniffer_core::layout::collect_layout_rects;

@@ -125,7 +125,8 @@ fn test_scrollview_clip_stack_lifecycle_and_radius() {
         children: vec![],
     };
     let child_layout = LayoutNode {
-        element: child.clone(),
+        node_id: 1,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"card_1")),
         rect: Rect::new(0.0, 0.0, 200.0, 80.0),
         children: vec![],
     };
@@ -154,7 +155,8 @@ fn test_scrollview_clip_stack_lifecycle_and_radius() {
     };
 
     let scroll_layout = LayoutNode {
-        element: scroll_view.clone(),
+        node_id: 0,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"app_scroll")),
         rect: Rect::new(20.0, 40.0, 360.0, 600.0),
         children: vec![child_layout],
     };
@@ -205,7 +207,8 @@ fn test_overflow_hidden_rounded_container_clip() {
         children: vec![],
     };
     let child_layout = LayoutNode {
-        element: child.clone(),
+        node_id: 1,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"inner")),
         rect: Rect::new(10.0, 10.0, 100.0, 50.0),
         children: vec![],
     };
@@ -216,7 +219,8 @@ fn test_overflow_hidden_rounded_container_clip() {
         children: vec![child],
     };
     let container_layout = LayoutNode {
-        element: container.clone(),
+        node_id: 0,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"card")),
         rect: Rect::new(50.0, 50.0, 200.0, 100.0),
         children: vec![child_layout],
     };
