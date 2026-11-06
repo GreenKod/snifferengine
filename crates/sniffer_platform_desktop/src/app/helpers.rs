@@ -1,21 +1,9 @@
 use sniffer_core::layout::LayoutNode;
-use sniffer_core::math::Rect;
+pub use sniffer_core::layout::collect_layout_rects;
 use sniffer_core::physics::ScrollPhysics;
 use sniffer_core::types::Element;
 use std::collections::HashMap;
 use std::hash::BuildHasher;
-
-pub fn collect_layout_rects<'a, S: BuildHasher>(
-    node: &'a LayoutNode,
-    map: &mut HashMap<&'a str, Rect, S>,
-) {
-    if let Some(id) = node.element.id() {
-        map.insert(id, node.rect);
-    }
-    for child in &node.children {
-        collect_layout_rects(child, map);
-    }
-}
 
 pub fn find_first_scrollview<'a>(
     element: &'a Element,

@@ -5,18 +5,20 @@ use taffy::prelude::*;
 
 pub type LayoutChildren = Vec<LayoutNode>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LayoutNode {
-    pub element: Element,
+    pub node_id: usize,
+    pub widget_id: Option<u64>,
     pub rect: Rect,
     pub children: LayoutChildren,
 }
 
 impl LayoutNode {
     #[must_use]
-    pub const fn new(element: Element, rect: Rect) -> Self {
+    pub const fn new(node_id: usize, widget_id: Option<u64>, rect: Rect) -> Self {
         Self {
-            element,
+            node_id,
+            widget_id,
             rect,
             children: Vec::new(),
         }
@@ -30,6 +32,80 @@ impl LayoutNode {
             }
         }
         None
+    }
+
+    /// Finds the layout rect of a widget by its FNV-1a widget ID.
+    #[must_use]
+    pub fn find_rect_by_widget_id(&self, target_widget_id: u64) -> Option<Rect> {
+        if self.widget_id == Some(target_widget_id) {
+            return Some(self.rect);
+        }
+        for child in &self.children {
+            if let Some(r) = child.find_rect_by_widget_id(target_widget_id) {
+                return Some(r);
+            }
+        }
+        None
+    }
+
+    /// Finds a reference to a child node by its FNV-1a widget ID.
+    #[must_use]
+    pub fn find_node_by_widget_id(&self, target_widget_id: u64) -> Option<&Self> {
+        if self.widget_id == Some(target_widget_id) {
+            return Some(self);
+        }
+        for child in &self.children {
+            if let Some(node) = child.find_node_by_widget_id(target_widget_id) {
+                return Some(node);
+            }
+        }
+        None
+    }
+
+    /// Deep hit-test returning the deepest matching node's widget ID and rect.
+    #[must_use]
+    pub fn hit_test_deep(&self, point: Point) -> Option<(u64, Rect)> {
+        if !self.rect.contains(point) {
+            return None;
+        }
+        for child in self.children.iter().rev() {
+            if let Some(hit) = child.hit_test_deep(point) {
+                return Some(hit);
+            }
+        }
+        self.widget_id.map(|wid| (wid, self.rect))
+    }
+
+    /// Returns the total number of nodes in this subtree including self.
+    #[must_use]
+    pub fn count_nodes(&self) -> usize {
+        1 + self.children.iter().map(Self::count_nodes).sum::<usize>()
+    }
+
+    /// Returns the maximum depth of the layout subtree.
+    #[must_use]
+    pub fn max_depth(&self) -> usize {
+        1 + self.children.iter().map(Self::max_depth).max().unwrap_or(0)
+    }
+}
+
+/// Recursively collects layout bounds for all named elements into a map.
+#[allow(clippy::implicit_hasher)]
+pub fn collect_layout_rects<'a, S: std::hash::BuildHasher>(
+    element: &'a Element,
+    node: &'a LayoutNode,
+    map: &mut std::collections::HashMap<&'a str, Rect, S>,
+) {
+    if let Some(id) = element.id() {
+        map.insert(id, node.rect);
+    }
+    if let Element::Container { children, .. }
+    | Element::ScrollView { children, .. }
+    | Element::SharedView { children, .. } = element
+    {
+        for (child_el, child_node) in children.iter().zip(&node.children) {
+            collect_layout_rects(child_el, child_node, map);
+        }
     }
 }
 
@@ -109,10 +185,10 @@ fn build_taffy_tree(taffy: &mut TaffyTree, element: &Element, measurer: &TextMea
         Element::Container { children, .. }
         | Element::ScrollView { children, .. }
         | Element::SharedView { children, .. } => {
-            let child_nodes: Vec<_> = children
-                .iter()
-                .map(|c| build_taffy_tree(taffy, c, measurer))
-                .collect();
+            let mut child_nodes = Vec::with_capacity(children.len());
+            for c in children {
+                child_nodes.push(build_taffy_tree(taffy, c, measurer));
+            }
             taffy.new_with_children(style, &child_nodes).unwrap()
         }
         Element::Label { text, .. } => {
@@ -205,53 +281,67 @@ fn resolve_layout(
     let abs_y = parent_y + layout.location.y;
     let rect = Rect::new(abs_x, abs_y, layout.size.width, layout.size.height);
 
-    let mut children = Vec::new();
-    if let Element::Container {
-        children: el_children,
-        ..
-    }
-    | Element::ScrollView {
-        children: el_children,
-        ..
-    }
-    | Element::SharedView {
-        children: el_children,
-        ..
-    } = element
-    {
-        let child_nodes = taffy.children(node).unwrap();
-        for (child_el, child_node) in el_children.iter().zip(child_nodes.iter()) {
-            children.push(resolve_layout(taffy, *child_node, child_el, abs_x, abs_y));
+    let children = match element {
+        Element::Container {
+            children: el_children,
+            ..
         }
-    }
+        | Element::ScrollView {
+            children: el_children,
+            ..
+        }
+        | Element::SharedView {
+            children: el_children,
+            ..
+        } => {
+            let mut children = Vec::with_capacity(el_children.len());
+            for (i, child_el) in el_children.iter().enumerate() {
+                if let Ok(child_node) = taffy.child_at_index(node, i) {
+                    children.push(resolve_layout(taffy, child_node, child_el, abs_x, abs_y));
+                }
+            }
+            children
+        }
+        _ => Vec::new(),
+    };
+
+    let widget_id = element
+        .id()
+        .map(|id_str| crate::ui::widget::fnv1a(id_str.as_bytes()));
 
     LayoutNode {
-        element: element.clone(),
+        node_id: usize::from(node),
+        widget_id,
         rect,
         children,
     }
 }
 
+use std::cell::RefCell;
 use std::sync::LazyLock;
 
 pub static GLOBAL_TEXT_MEASURER: LazyLock<TextMeasurer<'static>> = LazyLock::new(|| {
     TextMeasurer::new(DEFAULT_FONT).expect("Failed to load default font for measuring")
 });
 
-/// Calculates the layout for the entire UI tree.
+thread_local! {
+    static THREAD_TAFFY: RefCell<TaffyTree> = RefCell::new(TaffyTree::new());
+}
+
+/// Calculates the layout for the entire UI tree using a caller-provided reusable `TaffyTree` buffer.
 ///
-/// # Panics
-///
-/// Panics if the default font cannot be loaded for measuring text.
+/// Pre-clears the tree to guarantee a clean state and clears it upon completion to retain allocated capacity
+/// without leaking styles or nodes across calls.
 #[must_use]
-pub fn calculate_layout(
+pub fn calculate_layout_with_taffy(
+    taffy: &mut TaffyTree,
     element: &Element,
     parent_size: Size,
     x_offset: f32,
     y_offset: f32,
 ) -> LayoutNode {
-    let mut taffy = TaffyTree::new();
-    let root = build_taffy_tree(&mut taffy, element, &GLOBAL_TEXT_MEASURER);
+    taffy.clear();
+    let root = build_taffy_tree(taffy, element, &GLOBAL_TEXT_MEASURER);
 
     // Create an invisible root style to enforce parent size
     let root_style = Style {
@@ -274,5 +364,24 @@ pub fn calculate_layout(
         .unwrap();
 
     // Skip the wrapper node and just resolve the root
-    resolve_layout(&taffy, root, element, x_offset, y_offset)
+    let result = resolve_layout(taffy, root, element, x_offset, y_offset);
+    taffy.clear();
+    result
+}
+
+/// Calculates the layout for the entire UI tree using a persistent thread-local `TaffyTree` buffer.
+///
+/// # Panics
+///
+/// Panics if the default font cannot be loaded for measuring text.
+#[must_use]
+pub fn calculate_layout(
+    element: &Element,
+    parent_size: Size,
+    x_offset: f32,
+    y_offset: f32,
+) -> LayoutNode {
+    THREAD_TAFFY.with_borrow_mut(|taffy| {
+        calculate_layout_with_taffy(taffy, element, parent_size, x_offset, y_offset)
+    })
 }

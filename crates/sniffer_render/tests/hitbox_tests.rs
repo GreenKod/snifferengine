@@ -12,7 +12,8 @@ fn test_find_clicked_button() {
         children: vec![],
     };
     let btn_node = LayoutNode {
-        element: btn.clone(),
+        node_id: 1,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"app_btn_1")),
         rect: Rect::new(50.0, 100.0, 150.0, 60.0),
         children: vec![],
     };
@@ -23,7 +24,8 @@ fn test_find_clicked_button() {
         children: vec![btn],
     };
     let root_node = LayoutNode {
-        element: root.clone(),
+        node_id: 0,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"root")),
         rect: Rect::new(0.0, 0.0, 800.0, 600.0),
         children: vec![btn_node],
     };
@@ -50,7 +52,8 @@ fn test_invisible_layer_and_structural_wrapper_hitbox() {
         children: vec![],
     };
     let card_node = LayoutNode {
-        element: sheet_card.clone(),
+        node_id: 2,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"sheet_card_0")),
         rect: Rect::new(20.0, 50.0, 100.0, 100.0),
         children: vec![],
     };
@@ -61,7 +64,8 @@ fn test_invisible_layer_and_structural_wrapper_hitbox() {
         children: vec![sheet_card],
     };
     let grid_node = LayoutNode {
-        element: grid_wrapper.clone(),
+        node_id: 1,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"sheet_grid_wrapper")),
         rect: Rect::new(0.0, 40.0, 400.0, 800.0),
         children: vec![card_node],
     };
@@ -77,7 +81,8 @@ fn test_invisible_layer_and_structural_wrapper_hitbox() {
         children: vec![grid_wrapper.clone()],
     };
     let hidden_root_node = LayoutNode {
-        element: hidden_sheet_root.clone(),
+        node_id: 0,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"modal_sheet_root")),
         rect: Rect::new(0.0, 0.0, 400.0, 900.0),
         children: vec![grid_node.clone()],
     };
@@ -105,7 +110,8 @@ fn test_invisible_layer_and_structural_wrapper_hitbox() {
         children: vec![grid_wrapper],
     };
     let visible_root_node = LayoutNode {
-        element: visible_sheet_root.clone(),
+        node_id: 0,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"modal_sheet_root")),
         rect: Rect::new(0.0, 0.0, 400.0, 900.0),
         children: vec![grid_node],
     };
@@ -147,7 +153,8 @@ fn test_transformed_button_hitbox() {
         children: vec![],
     };
     let btn_node = LayoutNode {
-        element: btn.clone(),
+        node_id: 1,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"btn_shifted")),
         rect: Rect::new(50.0, 50.0, 100.0, 100.0),
         children: vec![],
     };
@@ -158,7 +165,8 @@ fn test_transformed_button_hitbox() {
         children: vec![btn],
     };
     let root_node = LayoutNode {
-        element: root.clone(),
+        node_id: 0,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"root")),
         rect: Rect::new(0.0, 0.0, 800.0, 600.0),
         children: vec![btn_node],
     };

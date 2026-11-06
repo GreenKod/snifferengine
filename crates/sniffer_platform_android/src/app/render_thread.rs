@@ -296,7 +296,11 @@ pub fn spawn_render_thread(
 
                     if has_widgets {
                         let mut layout_rects = std::collections::HashMap::new();
-                        collect_layout_rects(&current_state.layout_tree, &mut layout_rects);
+                        collect_layout_rects(
+                            &current_state.root_element,
+                            &current_state.layout_tree,
+                            &mut layout_rects,
+                        );
                         if let Ok(mut reg) = pkg_registry.write() {
                             reg.render_widgets(renderer, &layout_rects, None);
                         }
