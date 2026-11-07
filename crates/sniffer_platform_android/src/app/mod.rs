@@ -95,7 +95,7 @@ pub fn android_main(app: AndroidApp) {
         metrics: ScreenMetrics::from_scale(initial_width, initial_height, density, scaled_density),
         style_map: state.runtime.style_map.clone(),
         data_map: state.runtime.data_map.clone(),
-        transition_manager: state.runtime.transition_manager.clone(),
+        transition_manager: Arc::clone(&state.runtime.cached_transition_snapshot),
         shaders_warmed_up: false,
         version: 0,
         frame_start: init_time,

@@ -80,6 +80,8 @@ pub struct RuntimeServices {
     pub plugin_registry: PluginRegistry,
     pub pkg_registry: Arc<RwLock<PackageRegistry>>,
     pub transition_manager: sniffer_core::anim::TransitionManager,
+    pub cached_transition_snapshot: Arc<sniffer_core::anim::TransitionManager>,
+    pub transition_dirty: bool,
 }
 
 /// Controls thread lifecycle, idle detection, frame pacing, and telemetry profiling.
@@ -189,6 +191,10 @@ impl AppState {
                 plugin_registry,
                 pkg_registry,
                 transition_manager: sniffer_core::anim::TransitionManager::default(),
+                cached_transition_snapshot: Arc::new(
+                    sniffer_core::anim::TransitionManager::default(),
+                ),
+                transition_dirty: true,
             },
             pacing: EnginePacingState {
                 running: true,

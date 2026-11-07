@@ -138,6 +138,7 @@ fn sync_ui_tree_and_virtualization(
             &mut state.physics.scroll_physics,
         );
         state.runtime.transition_manager.sync_tree(root_element);
+        state.runtime.transition_dirty = true;
     }
     #[cfg(feature = "devkit")]
     let t_sync = if ui_changed || screen_changed || is_first_frame {
@@ -147,6 +148,12 @@ fn sync_ui_tree_and_virtualization(
     };
     let is_animating = state.runtime.transition_manager.tick(dt)
         || state.runtime.transition_manager.is_animating();
+
+    if is_animating || state.runtime.transition_dirty {
+        state.runtime.cached_transition_snapshot =
+            Arc::new(state.runtime.transition_manager.clone());
+        state.runtime.transition_dirty = false;
+    }
 
     (
         is_animating,
@@ -372,7 +379,7 @@ fn publish_render_snapshot_if_needed(
             metrics,
             style_map: state.runtime.style_map.clone(),
             data_map: state.runtime.data_map.clone(),
-            transition_manager: state.runtime.transition_manager.clone(),
+            transition_manager: Arc::clone(&state.runtime.cached_transition_snapshot),
             shaders_warmed_up: current_warmed_up,
             version: state.pacing.render_state_version,
             frame_start,
