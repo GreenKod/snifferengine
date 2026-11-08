@@ -80,6 +80,20 @@ pub fn detect_desktop_theme() -> sniffer_core::vault::SystemTheme {
 
 impl AppState {
     #[must_use]
+    pub fn has_active_animation(&self) -> bool {
+        self.is_mouse_down
+            || self.active_scrollview_drag.is_some()
+            || !self.kinetic_scrolls.is_empty()
+            || self.transition_manager.is_animating()
+            || self
+                .scroll_physics
+                .values()
+                .any(sniffer_core::physics::ScrollPhysics::is_animating)
+            || !self.event_bus.is_empty()
+            || self.action_queue.lock().is_ok_and(|q| !q.is_empty())
+    }
+
+    #[must_use]
     pub fn new() -> Self {
         let mut plugin_registry = PluginRegistry::default();
         let action_queue = Arc::new(Mutex::new(Vec::new()));
