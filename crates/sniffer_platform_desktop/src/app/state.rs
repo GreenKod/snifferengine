@@ -49,6 +49,12 @@ pub struct AppState {
     pub plugin_registry: PluginRegistry,
     pub pkg_registry: Arc<RwLock<PackageRegistry>>,
     pub transition_manager: sniffer_core::anim::TransitionManager,
+    pub cached_root_element: Arc<sniffer_core::types::Element>,
+    pub cached_layout: Option<Arc<sniffer_core::layout::LayoutNode>>,
+    pub last_ui_version: u64,
+    pub layout_dirty: bool,
+    pub cached_screen_size: (f32, f32),
+    pub last_indicator_page: Option<f32>,
     #[cfg(feature = "devkit")]
     pub profiler: Arc<Mutex<sniffer_core::profiler::FrameProfiler>>,
 }
@@ -151,6 +157,12 @@ impl AppState {
         sniffer_plugin::PluginLoader::new(&plugins_dir)
             .register_all(&mut plugin_registry, &action_queue);
 
+        let empty_root = Arc::new(sniffer_core::types::Element::Container {
+            id: None,
+            style: sniffer_core::style::Style::default(),
+            children: vec![],
+        });
+
         Self {
             running: true,
             window_focused: true,
@@ -175,6 +187,12 @@ impl AppState {
             plugin_registry,
             pkg_registry,
             transition_manager: sniffer_core::anim::TransitionManager::default(),
+            cached_root_element: empty_root,
+            cached_layout: None,
+            last_ui_version: 0,
+            layout_dirty: true,
+            cached_screen_size: (0.0, 0.0),
+            last_indicator_page: None,
             #[cfg(feature = "devkit")]
             profiler,
         }

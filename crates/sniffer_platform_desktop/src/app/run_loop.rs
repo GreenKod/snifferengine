@@ -57,10 +57,14 @@ pub fn run_loop(
                         sniffer_core::types::SCREEN_HEIGHT
                             .store(height.to_bits(), std::sync::atomic::Ordering::Relaxed);
 
+                        app.cached_layout = None;
+                        app.layout_dirty = true;
                         app.event_bus.push(UiEvent::WindowResized(width, height));
                         desktop.window.request_redraw();
                     }
                     winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+                        app.cached_layout = None;
+                        app.layout_dirty = true;
                         desktop.window.request_redraw();
                     }
                     winit::event::WindowEvent::RedrawRequested => {
@@ -108,7 +112,13 @@ pub fn run_loop(
 
                 let is_smoke_testing =
                     smoke_test_target_frames.is_some_and(|target| rendered_frames < target);
-                let has_active_animation = app.has_active_animation() || is_smoke_testing;
+                let current_ui_version =
+                    sniffer_core::types::UI_VERSION.load(std::sync::atomic::Ordering::Relaxed);
+                let ui_changed = app.layout_dirty
+                    || app.cached_layout.is_none()
+                    || current_ui_version != app.last_ui_version;
+                let has_active_animation =
+                    app.has_active_animation() || is_smoke_testing || ui_changed;
 
                 let now = std::time::Instant::now();
                 if has_active_animation {
