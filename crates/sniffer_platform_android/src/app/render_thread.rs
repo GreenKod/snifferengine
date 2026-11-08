@@ -255,8 +255,9 @@ pub fn spawn_render_thread(
                         }
                     }
 
-                    #[allow(unused_variables)]
+                    #[cfg(feature = "devkit")]
                     let render_start = std::time::Instant::now();
+                    #[cfg(feature = "devkit")]
                     let is_fresh_state = current_state.version != last_rendered_version;
                     last_rendered_version = current_state.version;
                     let width = current_state.metrics.physical_width;
@@ -319,19 +320,19 @@ pub fn spawn_render_thread(
                     }
 
                     renderer.end_frame();
+                    #[cfg(feature = "devkit")]
                     let draw_end = std::time::Instant::now();
 
                     egl.swap_buffers();
                     let _ = vsync_tx.try_send(());
+                    #[cfg(feature = "devkit")]
                     let swap_end = std::time::Instant::now();
 
+                    #[cfg(feature = "devkit")]
                     if let Ok(mut prof) = profiler.lock() {
-                        #[cfg(feature = "devkit")]
-                        {
-                            let total_nodes =
-                                sniffer_core::profiler::count_elements(&current_state.root_element);
-                            prof.record_entities(rendered_nodes, total_nodes);
-                        }
+                        let total_nodes =
+                            sniffer_core::profiler::count_elements(&current_state.root_element);
+                        prof.record_entities(rendered_nodes, total_nodes);
                         if is_fresh_state {
                             prof.record_frame_detailed(
                                 current_state.frame_start,

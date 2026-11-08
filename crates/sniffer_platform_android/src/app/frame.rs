@@ -408,7 +408,19 @@ pub fn update_and_render_state(
     let is_first_frame =
         matches!(root_element, Element::Container { children, .. } if children.is_empty());
 
-    let (is_animating, _timings) = sync_ui_tree_and_virtualization(
+    #[cfg(feature = "devkit")]
+    let (is_animating, timings) = sync_ui_tree_and_virtualization(
+        state,
+        root_element,
+        viewport.width,
+        viewport.height,
+        dt,
+        viewport.ui_changed,
+        viewport.screen_changed,
+        is_first_frame,
+    );
+    #[cfg(not(feature = "devkit"))]
+    let (is_animating, _) = sync_ui_tree_and_virtualization(
         state,
         root_element,
         viewport.width,
@@ -428,12 +440,12 @@ pub fn update_and_render_state(
     );
 
     #[cfg(feature = "devkit")]
-    if _timings.t_build_ui + _timings.t_sync + layout_res.t_taffy > 16.0 {
+    if timings.t_build_ui + timings.t_sync + layout_res.t_taffy > 16.0 {
         sniffer_core::dev_log!(
             "[MainThread Breakdown] Total: {:.1}ms (JS build_ui: {:.1}ms, Tree sync: {:.1}ms, Taffy layout: {:.1}ms)",
             frame_start.elapsed().as_secs_f32() * 1000.0,
-            _timings.t_build_ui,
-            _timings.t_sync,
+            timings.t_build_ui,
+            timings.t_sync,
             layout_res.t_taffy
         );
     }
