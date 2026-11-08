@@ -57,10 +57,14 @@ pub fn run_loop(
                         sniffer_core::types::SCREEN_HEIGHT
                             .store(height.to_bits(), std::sync::atomic::Ordering::Relaxed);
 
+                        app.cached_layout = None;
+                        app.layout_dirty = true;
                         app.event_bus.push(UiEvent::WindowResized(width, height));
                         desktop.window.request_redraw();
                     }
                     winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+                        app.cached_layout = None;
+                        app.layout_dirty = true;
                         desktop.window.request_redraw();
                     }
                     winit::event::WindowEvent::RedrawRequested => {
@@ -95,8 +99,10 @@ pub fn run_loop(
                     _ => {}
                 }
 
-                crate::input::handle_winit_event(&event, &mut app, &mut input);
-                desktop.window.request_redraw();
+                if !matches!(event, winit::event::WindowEvent::RedrawRequested) {
+                    crate::input::handle_winit_event(&event, &mut app, &mut input);
+                    desktop.window.request_redraw();
+                }
             }
             winit::event::Event::AboutToWait => {
                 if !app.running {
@@ -104,8 +110,40 @@ pub fn run_loop(
                     return;
                 }
 
-                desktop.window.request_redraw();
-                active_event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+                let is_smoke_testing =
+                    smoke_test_target_frames.is_some_and(|target| rendered_frames < target);
+                let current_ui_version =
+                    sniffer_core::types::UI_VERSION.load(std::sync::atomic::Ordering::Relaxed);
+                let ui_changed = app.layout_dirty
+                    || app.cached_layout.is_none()
+                    || current_ui_version != app.last_ui_version;
+                let has_active_animation =
+                    app.has_active_animation() || is_smoke_testing || ui_changed;
+
+                let now = std::time::Instant::now();
+                if has_active_animation {
+                    // Frame pacing during animations or smoke testing (~120 FPS, 8.33ms)
+                    let target_frame_duration = std::time::Duration::from_nanos(8_333_333);
+                    let next_frame_time = last_frame_time + target_frame_duration;
+                    if now >= next_frame_time {
+                        desktop.window.request_redraw();
+                        active_event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+                    } else {
+                        active_event_loop.set_control_flow(
+                            winit::event_loop::ControlFlow::WaitUntil(next_frame_time),
+                        );
+                    }
+                } else {
+                    // Idle mode: sleep for 100ms to eliminate unnecessary CPU usage
+                    let idle_interval = std::time::Duration::from_millis(100);
+                    let next_idle_tick = last_frame_time + idle_interval;
+                    if now >= next_idle_tick {
+                        desktop.window.request_redraw();
+                    }
+                    active_event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
+                        now + idle_interval,
+                    ));
+                }
             }
             _ => {}
         })

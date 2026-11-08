@@ -2,6 +2,7 @@ use sniffer_core::ScreenMetrics;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub enum RenderMessage {
     InitWindow(usize, f32, f32),
     WindowResized(usize, f32, f32),
@@ -18,7 +19,7 @@ pub struct SharedRenderState {
     pub metrics: ScreenMetrics,
     pub style_map: sniffer_core::ui::style_map::StyleMap,
     pub data_map: sniffer_core::ui::data_map::DataMap,
-    pub transition_manager: sniffer_core::anim::TransitionManager,
+    pub transition_manager: Arc<sniffer_core::anim::TransitionManager>,
     pub shaders_warmed_up: bool,
     pub version: u64,
     pub frame_start: std::time::Instant,

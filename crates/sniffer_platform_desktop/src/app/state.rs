@@ -49,6 +49,12 @@ pub struct AppState {
     pub plugin_registry: PluginRegistry,
     pub pkg_registry: Arc<RwLock<PackageRegistry>>,
     pub transition_manager: sniffer_core::anim::TransitionManager,
+    pub cached_root_element: Arc<sniffer_core::types::Element>,
+    pub cached_layout: Option<Arc<sniffer_core::layout::LayoutNode>>,
+    pub last_ui_version: u64,
+    pub layout_dirty: bool,
+    pub cached_screen_size: (f32, f32),
+    pub last_indicator_page: Option<f32>,
     #[cfg(feature = "devkit")]
     pub profiler: Arc<Mutex<sniffer_core::profiler::FrameProfiler>>,
 }
@@ -79,6 +85,20 @@ pub fn detect_desktop_theme() -> sniffer_core::vault::SystemTheme {
 }
 
 impl AppState {
+    #[must_use]
+    pub fn has_active_animation(&self) -> bool {
+        self.is_mouse_down
+            || self.active_scrollview_drag.is_some()
+            || !self.kinetic_scrolls.is_empty()
+            || self.transition_manager.is_animating()
+            || self
+                .scroll_physics
+                .values()
+                .any(sniffer_core::physics::ScrollPhysics::is_animating)
+            || !self.event_bus.is_empty()
+            || self.action_queue.lock().is_ok_and(|q| !q.is_empty())
+    }
+
     #[must_use]
     pub fn new() -> Self {
         let mut plugin_registry = PluginRegistry::default();
@@ -137,6 +157,12 @@ impl AppState {
         sniffer_plugin::PluginLoader::new(&plugins_dir)
             .register_all(&mut plugin_registry, &action_queue);
 
+        let empty_root = Arc::new(sniffer_core::types::Element::Container {
+            id: None,
+            style: sniffer_core::style::Style::default(),
+            children: vec![],
+        });
+
         Self {
             running: true,
             window_focused: true,
@@ -161,6 +187,12 @@ impl AppState {
             plugin_registry,
             pkg_registry,
             transition_manager: sniffer_core::anim::TransitionManager::default(),
+            cached_root_element: empty_root,
+            cached_layout: None,
+            last_ui_version: 0,
+            layout_dirty: true,
+            cached_screen_size: (0.0, 0.0),
+            last_indicator_page: None,
             #[cfg(feature = "devkit")]
             profiler,
         }

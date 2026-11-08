@@ -7,8 +7,9 @@ use sniffer_core::dev_log;
 use sniffer_core::ui::event::UiEvent;
 use sniffer_core::{Action, Renderer, ScreenMetrics, Size, calculate_layout};
 use sniffer_render::GlowRenderer;
-use sniffer_render::draw::draw_ui;
+use sniffer_render::draw::draw_ui_with_physics;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 const DESKTOP_BG_COLOR: u32 = 0x000B_0B0E;
 
@@ -42,23 +43,40 @@ pub fn render_desktop_frame(
     sniffer_core::types::SCREEN_HEIGHT
         .store(height.to_bits(), std::sync::atomic::Ordering::Relaxed);
 
+    let screen_changed = (width - app.cached_screen_size.0).abs() > 0.5
+        || (height - app.cached_screen_size.1).abs() > 0.5;
+    if screen_changed {
+        app.cached_screen_size = (width, height);
+        app.cached_layout = None;
+        app.layout_dirty = true;
+    }
+
     app.plugin_registry.tick();
     if let Ok(mut reg) = app.pkg_registry.write() {
         reg.tick_all(dt);
     }
 
-    let mut root_element =
-        app.plugin_registry
-            .build_ui()
-            .unwrap_or_else(|| sniffer_core::types::Element::Container {
-                id: None,
-                style: sniffer_core::style::Style::default(),
-                children: vec![],
-            });
+    let current_ui_version =
+        sniffer_core::types::UI_VERSION.load(std::sync::atomic::Ordering::Relaxed);
+    let is_first_frame = app.cached_layout.is_none();
+    let ui_changed =
+        is_first_frame || app.layout_dirty || (current_ui_version != app.last_ui_version);
 
-    sniffer_core::physics::sync_scroll_physics_from_tree(&root_element, &mut app.scroll_physics);
+    if ui_changed {
+        if let Some(new_root) = app.plugin_registry.build_ui() {
+            app.cached_root_element = Arc::new(new_root);
+            app.layout_dirty = true;
+        }
+        app.last_ui_version = current_ui_version;
+        sniffer_core::physics::sync_scroll_physics_from_tree(
+            &app.cached_root_element,
+            &mut app.scroll_physics,
+        );
+        app.transition_manager.sync_tree(&app.cached_root_element);
+    }
+    let root_element = Arc::clone(&app.cached_root_element);
 
-    let vmin_px = width.min(height) / 100.0;
+    let mut scroll_offsets = HashMap::new();
     let phys_ids: Vec<u64> = app.scroll_physics.keys().copied().collect();
     for sv_id in phys_ids {
         if let Some(phys) = app.scroll_physics.get_mut(&sv_id) {
@@ -79,24 +97,20 @@ pub fn render_desktop_frame(
                         });
                     }
 
-                    let _ = sniffer_core::physics::update_indicator_dots_in_element(
-                        &mut root_element,
-                        phys.last_snap_page,
-                        vmin_px,
-                    );
+                    let page_float = (phys.pos_x / snap_width).clamp(0.0, max_page as f32);
+                    let target_page_float = if phys.snap_just_completed {
+                        clamped_page as f32
+                    } else {
+                        page_float
+                    };
+                    app.last_indicator_page = Some(target_page_float);
                 }
             }
 
-            sniffer_core::physics::inject_physics_to_tree(
-                &mut root_element,
-                sv_id,
-                phys.pos_x,
-                phys.pos_y,
-            );
+            scroll_offsets.insert(sv_id, (phys.pos_x, phys.pos_y));
         }
     }
 
-    app.transition_manager.sync_tree(&root_element);
     let _ = app.transition_manager.tick(dt);
 
     let scale_x = width / f32::from(u16::try_from(log_w).unwrap_or(1));
@@ -115,12 +129,26 @@ pub fn render_desktop_frame(
     });
 
     let metrics = ScreenMetrics::from_dpi(width, height, desktop.dpi);
-    let layout_tree = calculate_layout(&root_element, Size::new(width, height), 0.0, 0.0);
-    sniffer_core::physics::sync_max_scroll_from_layout(
-        &root_element,
-        &layout_tree,
-        &mut app.scroll_physics,
-    );
+    let layout_tree = if !app.layout_dirty
+        && let Some(ref cached) = app.cached_layout
+    {
+        Arc::clone(cached)
+    } else {
+        let fresh = Arc::new(calculate_layout(
+            &root_element,
+            Size::new(width, height),
+            0.0,
+            0.0,
+        ));
+        sniffer_core::physics::sync_max_scroll_from_layout(
+            &root_element,
+            &fresh,
+            &mut app.scroll_physics,
+        );
+        app.cached_layout = Some(Arc::clone(&fresh));
+        app.layout_dirty = false;
+        fresh
+    };
 
     process_frame_inputs(
         app,
@@ -168,7 +196,7 @@ pub fn render_desktop_frame(
     renderer.clear(DESKTOP_BG_COLOR);
 
     #[allow(unused_variables)]
-    let rendered_nodes = draw_ui(
+    let rendered_nodes = draw_ui_with_physics(
         renderer,
         &root_element,
         &layout_tree,
@@ -179,6 +207,8 @@ pub fn render_desktop_frame(
         1.0,
         0.0,
         0.0,
+        Some(&scroll_offsets),
+        app.last_indicator_page,
     );
 
     let has_widgets = app.pkg_registry.read().is_ok_and(|reg| reg.has_widgets());

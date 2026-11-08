@@ -111,6 +111,8 @@ pub fn handle_winit_event(
                 .store(width.to_bits(), std::sync::atomic::Ordering::Relaxed);
             sniffer_core::types::SCREEN_HEIGHT
                 .store(height.to_bits(), std::sync::atomic::Ordering::Relaxed);
+            app.cached_layout = None;
+            app.layout_dirty = true;
             app.event_bus.push(UiEvent::WindowResized(width, height));
         }
         WindowEvent::MouseWheel { delta, .. } => match delta {
