@@ -104,7 +104,7 @@ pub fn android_main(app: AndroidApp) {
         page_indicator_float: None,
     })));
 
-    let (render_tx, render_rx) = crossbeam_channel::unbounded::<RenderMessage>();
+    let (render_tx, render_rx) = crossbeam_channel::bounded::<RenderMessage>(16);
     let (vsync_tx, vsync_rx) = crossbeam_channel::bounded::<()>(1);
 
     render_thread::spawn_render_thread(
@@ -227,7 +227,7 @@ pub fn android_main(app: AndroidApp) {
                 current_ui_version,
                 frame_start,
             );
-            let _ = render_tx.send(RenderMessage::RequestRedraw);
+            let _ = render_tx.try_send(RenderMessage::RequestRedraw);
             true
         } else {
             false
@@ -245,10 +245,11 @@ pub fn android_main(app: AndroidApp) {
         if rendered_this_frame && has_active_animation_after {
             // Wait for hardware VSync completion signal from the render thread's swap_buffers().
             // This locks the main thread's physics simulation and frame production in exact 1:1 cadence
-            // with the display panel refresh rate (60Hz, 90Hz, 120Hz), eliminating phase drift,
-            // skipped frames, and micro-jank.
-            // A timeout of 25ms ensures we never deadlock if the window is unbound or paused.
-            let _ = vsync_rx.recv_timeout(Duration::from_millis(25));
+            // with the display panel refresh rate, eliminating phase drift, skipped frames, and micro-jank.
+            let vsync_timeout = Duration::from_secs_f32(
+                (1.5 / state.pacing.refresh_rate.clamp(30.0, 240.0)).max(0.015),
+            );
+            let _ = vsync_rx.recv_timeout(vsync_timeout);
         } else {
             let elapsed = frame_start.elapsed();
             let target_frame_duration = state.target_frame_duration(has_active_animation_after);

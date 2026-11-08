@@ -2,6 +2,7 @@ use sniffer_core::ScreenMetrics;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub enum RenderMessage {
     InitWindow(usize, f32, f32),
     WindowResized(usize, f32, f32),

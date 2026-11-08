@@ -237,6 +237,18 @@ pub fn spawn_render_thread(
                                     ) {}
                                     current_state = shared_render_state.read().unwrap().clone();
                                 }
+                                RenderMessage::WindowResized(_ptr, _w, _h) => {
+                                    needs_draw = true;
+                                    current_state = shared_render_state.read().unwrap().clone();
+                                }
+                                RenderMessage::LowMemory => {
+                                    renderer.trim_memory();
+                                    if let Ok(reg) = pkg_registry.read() {
+                                        reg.trim_memory(
+                                            sniffer_pkg::package::MemoryTrimLevel::Critical,
+                                        );
+                                    }
+                                }
                                 RenderMessage::TerminateWindow(ack) => {
                                     pending_ack = ack;
                                     is_window_bound = false;
@@ -247,7 +259,7 @@ pub fn spawn_render_thread(
                                     }
                                     return;
                                 }
-                                _ => {}
+                                RenderMessage::InitWindow(..) => {}
                             }
                         }
                         if !is_window_bound || !needs_draw {
