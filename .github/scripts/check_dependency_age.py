@@ -195,7 +195,7 @@ def main() -> int:
     # Emergency bypass check
     commit_msg = parse_commit_message()
     if "[skip-dep-age]" in commit_msg or os.environ.get("SKIP_DEP_AGE") == "true":
-        print("⚠️ [quarantine-bypass] '[skip-dep-age]' detected. Skipping dependency age check.")
+        print("[WARN] [quarantine-bypass] '[skip-dep-age]' detected. Skipping dependency age check.")
         return 0
 
     current_lock = get_current_cargo_lock()
@@ -214,15 +214,15 @@ def main() -> int:
     updated = find_updated_packages(base_packages, current_packages)
 
     if not updated:
-        print("✅ No crates.io dependencies were added or updated.")
+        print("[OK] No crates.io dependencies were added or updated.")
         return 0
 
-    print(f"🔍 Found {len(updated)} updated or newly added crates.io dependency/ies:")
+    print(f"[INFO] Found {len(updated)} updated or newly added crates.io dependency/ies:")
     for name, old_v, new_v in updated:
         if old_v:
-            print(f"   • {name}: {old_v} -> {new_v}")
+            print(f"   - {name}: {old_v} -> {new_v}")
         else:
-            print(f"   • {name}: (new) {new_v}")
+            print(f"   - {name}: (new) {new_v}")
 
     now = datetime.datetime.now(datetime.timezone.utc)
     violations: List[str] = []
@@ -245,22 +245,22 @@ def main() -> int:
                 print(f"::error::{err_msg}")
                 violations.append(err_msg)
             else:
-                print(f"   ✓ {name} v{new_v} published {age_hours:.1f}h ago (>= {args.min_age_hours:.0f}h). OK.")
+                print(f"   [OK] {name} v{new_v} published {age_hours:.1f}h ago (>= {args.min_age_hours:.0f}h). OK.")
         except Exception as e:
             print(f"::warning::Failed to verify publication date for {name} v{new_v}: {e}")
 
     if violations:
         print("\n" + "=" * 70)
-        print("❌ DEPENDENCY QUARANTINE POLICY VIOLATION:")
+        print("[FAIL] DEPENDENCY QUARANTINE POLICY VIOLATION:")
         print("=" * 70)
         for v in violations:
-            print(f"  • {v}")
+            print(f"  - {v}")
         print("\nTo protect against supply chain poisoning, new releases cannot be used until 24 hours have passed.")
         print("If this is an emergency security hotfix, add '[skip-dep-age]' to your commit message.")
         print("=" * 70)
         return 1
 
-    print("\n✅ All modified dependencies satisfy the 24-hour quarantine policy.")
+    print("\n[OK] All modified dependencies satisfy the 24-hour quarantine policy.")
     return 0
 
 

@@ -42,19 +42,19 @@ fn test_clean_message() {
     assert_eq!(clean_message("[1, 2, 3]"), "[1, 2, 3]");
     assert_eq!(clean_message(r#"[{"id":"test"}]"#), r#"[{"id":"test"}]"#);
     // Regular messages remain intact
-    assert_eq!(clean_message("merhaba dünya"), "merhaba dünya");
+    assert_eq!(clean_message("hello world"), "hello world");
 }
 
 #[test]
 fn test_format_log_line() {
     // Info with message
     assert_eq!(
-        format_log_line("default_ui", LogLevel::Info, "merhaba dünya", 1),
-        "# merhaba dünya from default_ui, type info"
+        format_log_line("default_ui", LogLevel::Info, "hello world", 1),
+        "# hello world from default_ui, type info"
     );
     assert_eq!(
-        format_log_line("default_ui", LogLevel::Info, "merhaba dünya", 5),
-        "# merhaba dünya from default_ui, type info [x5]"
+        format_log_line("default_ui", LogLevel::Info, "hello world", 5),
+        "# hello world from default_ui, type info [x5]"
     );
 
     // Info without message

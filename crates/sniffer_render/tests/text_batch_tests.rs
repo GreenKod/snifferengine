@@ -7,12 +7,12 @@ fn test_grid_120_labels_batching() {
 
     // Mock a dense grid view with 120 items: titles, category tags, and emoji icons
     let app_titles = [
-        ("Telefon", "📞", 0xFFFF_FFFF_u32),
-        ("Mesajlar", "💬", 0xFF44_AAFF_u32),
-        ("Kamera", "📷", 0xFFFF_AA00_u32),
-        ("Galeri", "🖼️", 0xFFAA_FFAA_u32),
-        ("Ayarlar", "⚙️", 0xFFDD_DDDD_u32),
-        ("Tarayıcı", "🌐", 0xFF00_DDFF_u32),
+        ("Phone", "📞", 0xFFFF_FFFF_u32),
+        ("Messages", "💬", 0xFF44_AAFF_u32),
+        ("Camera", "📷", 0xFFFF_AA00_u32),
+        ("Gallery", "🖼️", 0xFFAA_FFAA_u32),
+        ("Settings", "⚙️", 0xFFDD_DDDD_u32),
+        ("Browser", "🌐", 0xFF00_DDFF_u32),
     ];
 
     let mut total_quads = 0;
@@ -26,7 +26,7 @@ fn test_grid_120_labels_batching() {
             1.0,
         ];
 
-        // Draw text characters (normal SDF glifler)
+        // Draw text characters (regular SDF glyphs)
         for _ in title.chars() {
             for v in 0..6 {
                 let x = (v as f32) * 5.0;
@@ -131,29 +131,25 @@ fn test_compare_unbatched_vs_batched_overhead() {
     }
     let duration_batched = start_batched.elapsed();
 
-    println!(
-        "\n================= BENCHMARK RAPORU: ESKİ vs YENİ (TEXT BATCHING) ================="
-    );
-    println!("Kare Başına Etiket Sayısı : {LABEL_COUNT}");
-    println!("Test Döngüsü (Frames)     : {ITERS}");
+    println!("\n================= BENCHMARK REPORT: OLD vs NEW (TEXT BATCHING) =================");
+    println!("Labels per Frame      : {LABEL_COUNT}");
+    println!("Test Iterations       : {ITERS}");
     println!("----------------------------------------------------------------------------------");
-    println!("ESKİ YÖNTEM (Per-draw allocation & draw call):");
-    println!(
-        "  - Toplam GPU Draw Call  : {unbatched_draw_calls} çağrı (kare başına {LABEL_COUNT})"
-    );
-    println!("  - Toplam Heap Tahsisi   : {total_unbatched_allocs} adet malloc/free");
-    println!("  - Toplam CPU Süresi     : {duration_unbatched:?}");
+    println!("OLD APPROACH (per-draw allocation & draw call):");
+    println!("  - Total GPU Draw Calls : {unbatched_draw_calls} (per frame: {LABEL_COUNT})");
+    println!("  - Total Heap Allocs    : {total_unbatched_allocs} malloc/free operations");
+    println!("  - Total CPU Time       : {duration_unbatched:?}");
     println!("----------------------------------------------------------------------------------");
-    println!("YENİ YÖNTEM (TextBatching & Unified Flush):");
-    println!("  - Toplam GPU Draw Call  : {batched_draw_calls} çağrı (kare başına 1)");
-    println!("  - Toplam Heap Tahsisi   : {total_batched_allocs} adet (SIFIR malloc/free)");
-    println!("  - Toplam CPU Süresi     : {duration_batched:?}");
+    println!("NEW APPROACH (TextBatching & unified flush):");
+    println!("  - Total GPU Draw Calls : {batched_draw_calls} (1 per frame)");
+    println!("  - Total Heap Allocs    : {total_batched_allocs} (ZERO malloc/free)");
+    println!("  - Total CPU Time       : {duration_batched:?}");
     println!("----------------------------------------------------------------------------------");
     let speedup = duration_unbatched.as_nanos() as f64 / duration_batched.as_nanos() as f64;
     let draw_reduction = (1.0 - (batched_draw_calls as f64 / unbatched_draw_calls as f64)) * 100.0;
-    println!("KAZANIM:");
-    println!("  - GPU Draw Call Düşüşü  : %{draw_reduction:.1} AZALMA!");
-    println!("  - CPU İşlem Hızı Artışı : {speedup:.2}x DAHA HIZLI!");
+    println!("IMPROVEMENT:");
+    println!("  - GPU Draw Call Reduction : {draw_reduction:.1}% decrease");
+    println!("  - CPU Speed Increase      : {speedup:.2}x faster");
     println!(
         "==================================================================================\n"
     );

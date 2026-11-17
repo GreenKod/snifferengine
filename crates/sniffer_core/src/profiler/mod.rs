@@ -309,7 +309,7 @@ impl JankWatchdog {
         };
 
         crate::dev_warn!(
-            "[JANK WATCHDOG] ⚠️ Frame #{} missed {} vsync(s), +{:.1}ms (interval: {}, budget: {:.2}ms @ {:.0}Hz) | Bottleneck: {} ({:.2}ms) | Work [Layout: {:.1}ms, Draw: {:.1}ms] Wait [Queue: {:.1}ms, Swap: {:.1}ms] Latency: {:.1}ms",
+            "[JANK WATCHDOG] Frame #{} missed {} vsync(s), +{:.1}ms (interval: {}, budget: {:.2}ms @ {:.0}Hz) | Bottleneck: {} ({:.2}ms) | Work [Layout: {:.1}ms, Draw: {:.1}ms] Wait [Queue: {:.1}ms, Swap: {:.1}ms] Latency: {:.1}ms",
             event.frame_number,
             event.missed_vsyncs,
             event.overrun_ms,

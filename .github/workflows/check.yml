@@ -410,7 +410,7 @@ jobs:
       - name: List Artifacts for Scanning
         run: |
           {
-            echo "### 📦 Engine Artifacts Prepared for Security Analysis"
+            echo "### Engine Artifacts Prepared for Security Analysis"
             echo "| Artifact File | Size |"
             echo "|---|---|"
             find scan_prepared -type f -exec ls -lh {} + 2>/dev/null | awk '{print "| `" $9 "` | " $5 " |"}' || echo "No artifacts found."
@@ -444,8 +444,8 @@ jobs:
           echo "::notice title=VirusTotal Fallback::Primary VIRUSTOTAL_API_KEY encountered an error or quota exhaustion. Fallback to VIRUSTOTAL_API_KEY_2 was executed."
           {
             echo ""
-            echo "### 🔄 VirusTotal Yedek Anahtar Devreye Girdi"
-            echo "> **Bilgi:** Birincil anahtar (\`VIRUSTOTAL_API_KEY\`) hata veya kota sınırına ulaştığı için yedek \`VIRUSTOTAL_API_KEY_2\` anahtarı kullanılarak tarama gerçekleştirildi."
+            echo "### VirusTotal Fallback Key Activated"
+            echo "> **Info:** The primary \`VIRUSTOTAL_API_KEY\` failed or reached its quota, so the scan was performed with the fallback \`VIRUSTOTAL_API_KEY_2\` key."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: VirusTotal Scan Notice (Skipped)
@@ -454,9 +454,9 @@ jobs:
           echo "::warning title=VirusTotal Scan Skipped::Neither VIRUSTOTAL_API_KEY nor VIRUSTOTAL_API_KEY_2 secret is configured in repository settings. Artifact malware scanning was skipped. To activate automated binary scanning, add VIRUSTOTAL_API_KEY or VIRUSTOTAL_API_KEY_2 to Repository Secrets."
           {
             echo ""
-            echo "### ⚠️ VirusTotal Taraması Atlandı"
-            echo "> **Uyarı:** \`VIRUSTOTAL_API_KEY\` veya \`VIRUSTOTAL_API_KEY_2\` gizli anahtarı tanımlanmadığı için ikili dosya taraması atlandı."
-            echo "> Otomatik antivirüs taramasını aktif etmek için GitHub reponuzda **Settings > Secrets and variables > Actions** sekmesine giderek anahtarınızı ekleyebilirsiniz."
+            echo "### VirusTotal Scan Skipped"
+            echo "> **Warning:** Neither the \`VIRUSTOTAL_API_KEY\` nor the \`VIRUSTOTAL_API_KEY_2\` secret is configured, so binary scanning was skipped."
+            echo "> To enable automated antivirus scanning, add your key under **Settings > Secrets and variables > Actions** in your GitHub repository."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ==========================================
@@ -479,7 +479,7 @@ jobs:
       - name: Consolidate Quality Gates
         run: |
           echo "=========================================================="
-          echo " 🛡️ SnifferEngine CI Quality Gate Status Check"
+          echo " SnifferEngine CI Quality Gate Status Check"
           echo "=========================================================="
           RESULTS=(
             "Pre-flight:${{ needs.pre-flight.result }}"
@@ -501,8 +501,8 @@ jobs:
           done
 
           if [ "$FAILED" -ne 0 ]; then
-            echo "❌ CI Quality Gate FAILED: One or more required platform checks failed."
+            echo "CI Quality Gate FAILED: One or more required platform checks failed."
             exit 1
           fi
 
-          echo "✅ All required SnifferEngine quality gates PASSED or were cleanly skipped!"
+          echo "All required SnifferEngine quality gates PASSED or were cleanly skipped!"
