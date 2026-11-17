@@ -30,7 +30,9 @@ pub mod prelude {
     pub use sniffer_core::types::{Action, DismissDirection, Element, ScrollDismissConfig};
     pub use sniffer_core::ui::event::{EventBus, UiEvent};
     pub use sniffer_core::ui::widget::{WidgetId, fnv1a};
-    pub use sniffer_plugin::{JsPlugin, PluginLoader, PluginRegistry, UiPlugin};
+    pub use sniffer_plugin::{
+        JsPlugin, PluginLoader, PluginRegistry, UiPlugin, WILDCARD_WIDGET_ID,
+    };
 }
 
 /// Launch the SnifferEngine desktop window loop.

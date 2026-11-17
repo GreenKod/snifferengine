@@ -4,6 +4,7 @@ use crate::js::HostApiConfig;
 use crate::js::engine::{DeadlineGuard, PluginEngine, create_engine};
 use crate::js::register_host_api;
 use crate::registry::{ApiMap, BroadcastQueue};
+use crate::r#trait::WILDCARD_WIDGET_ID;
 use crossbeam_channel::{Sender, unbounded};
 use rquickjs::Value;
 use sniffer_core::WidgetId;
@@ -33,11 +34,14 @@ pub enum PluginMsg {
     Unload,
 }
 
+/// JavaScript plugins resolve widget IDs at runtime inside `onEvent`, so they
+/// subscribe to the wildcard rather than enumerating IDs up front.
+const JS_PLUGIN_SUBSCRIPTIONS: [WidgetId; 1] = [WILDCARD_WIDGET_ID];
+
 #[allow(dead_code)]
 pub struct JsPlugin {
     pub(crate) msg_tx: Sender<PluginMsg>,
     pub(crate) ui_tree: Arc<Mutex<Option<Element>>>,
-    pub(crate) subscriptions: Vec<WidgetId>,
     pub(crate) has_active_timers: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -335,7 +339,6 @@ impl JsPlugin {
         Ok(Self {
             msg_tx,
             ui_tree,
-            subscriptions: vec![],
             has_active_timers,
         })
     }
@@ -356,7 +359,7 @@ impl JsPlugin {
 
 impl UiPlugin for JsPlugin {
     fn subscriptions(&self) -> &[WidgetId] {
-        &[]
+        &JS_PLUGIN_SUBSCRIPTIONS
     }
 
     fn build_ui(&self) -> Option<Element> {
@@ -420,7 +423,6 @@ mod tests {
         let plugin = JsPlugin {
             msg_tx: tx,
             ui_tree: Arc::new(Mutex::new(None)),
-            subscriptions: vec![],
             has_active_timers: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
 
@@ -443,5 +445,21 @@ mod tests {
         assert!(!UiPlugin::has_active_timers(&plugin));
         plugin.on_tick();
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn js_plugin_subscribes_to_every_widget_event_via_wildcard() {
+        let (tx, _rx) = unbounded();
+        let plugin = JsPlugin {
+            msg_tx: tx,
+            ui_tree: Arc::new(Mutex::new(None)),
+            has_active_timers: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+
+        assert_eq!(
+            UiPlugin::subscriptions(&plugin),
+            &[WILDCARD_WIDGET_ID],
+            "JS onEvent performs its own routing, so it must receive all scoped events"
+        );
     }
 }

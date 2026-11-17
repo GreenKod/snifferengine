@@ -15,4 +15,4 @@ pub use registry::PluginRegistry;
 pub use rquickjs;
 pub use serde_json;
 pub use sniffer_core::{dev_err, dev_log};
-pub use r#trait::UiPlugin;
+pub use r#trait::{UiPlugin, WILDCARD_WIDGET_ID};
