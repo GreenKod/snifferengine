@@ -22,7 +22,7 @@ allow = [
 name = "sniffer_engine"
 expression = "Apache-2.0"
 license-files = [
-    { path = "LICENSE", hash = 0x0 }
+    { path = "../../LICENSE", hash = 0x0 }
 ]
 
 [licenses.private]
@@ -30,8 +30,11 @@ ignore = true
 
 [advisories]
 ignore = [
-    "RUSTSEC-2024-0436", # paste crate is unmaintained, but wasmi depends on it
-    "RUSTSEC-2024-0370", # unmaintained advisory
+    # chrono is unmaintained (RUSTSEC-2026-0543). It is only used by the JS host
+    # bridge for local wall-clock formatting, where libc-backed local time is more
+    # reliable on Android than tzdb-file based alternatives. Revisit when a
+    # maintained local-time source works on all target platforms.
+    "RUSTSEC-2026-0543",
     "RUSTSEC-2026-0192", # ttf-parser is unmaintained (transitive dependency of winit/sctk-adwaita)
 ]
 
