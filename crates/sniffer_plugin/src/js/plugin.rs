@@ -2,6 +2,7 @@ use crate::UiPlugin;
 use crate::dev_err;
 use crate::js::HostApiConfig;
 use crate::js::engine::{DeadlineGuard, PluginEngine, create_engine};
+use crate::js::events::EventPayloadFormat;
 use crate::js::register_host_api;
 use crate::registry::{ApiMap, BroadcastQueue};
 use crate::r#trait::WILDCARD_WIDGET_ID;
@@ -202,6 +203,11 @@ impl JsPlugin {
                         .map(|f| rquickjs::Persistent::save(&ctx, f))
                 });
 
+            // Pick the event payload format once: object-aware handlers (the framework
+            // dispatcher, or plugins that opt in) skip the JSON string round-trip.
+            let mut payload_format =
+                context.with(|ctx| crate::js::events::detect_payload_format(&ctx));
+
             let mut gc_count = 0u32;
             let mut is_suspended = false;
             while let Ok(msg) = msg_rx.recv() {
@@ -214,15 +220,44 @@ impl JsPlugin {
                                     .ok()
                                     .map(|f| rquickjs::Persistent::save(&ctx, f))
                             });
+                            if on_event_fn.is_some() {
+                                // The handler was installed after script evaluation, so
+                                // re-resolve the bridge format for the late binding.
+                                payload_format = context
+                                    .with(|ctx| crate::js::events::detect_payload_format(&ctx));
+                            }
                         }
                         if let Some(ref on_event_fn) = on_event_fn {
                             let _guard = DeadlineGuard::arm(&deadline_ms);
-                            let event_json =
-                                crate::js::events::serialize_ui_event_to_json(&event, &plugin_id);
+                            crate::js::events::log_dispatch(&event, &plugin_id);
                             context.with(|ctx| {
                                 if let Ok(handler) = on_event_fn.clone().restore(&ctx) {
-                                    let res: Result<rquickjs::Value, _> =
-                                        handler.call((event_json,));
+                                    let res: Result<rquickjs::Value, _> = match payload_format {
+                                        EventPayloadFormat::Object => {
+                                            match crate::js::events::build_ui_event_object(
+                                                &ctx, &event,
+                                            ) {
+                                                Ok(payload) => handler.call((payload,)),
+                                                Err(err) => {
+                                                    // Object construction should not fail;
+                                                    // degrade to the legacy contract
+                                                    // instead of dropping the event.
+                                                    dev_err!(
+                                                        "Fast event bridge unavailable, falling back to JSON: {err}"
+                                                    );
+                                                    let payload = crate::js::events::serialize_ui_event_to_json(&event);
+                                                    handler.call((payload,))
+                                                }
+                                            }
+                                        }
+                                        EventPayloadFormat::JsonString => {
+                                            let payload =
+                                                crate::js::events::serialize_ui_event_to_json(
+                                                    &event,
+                                                );
+                                            handler.call((payload,))
+                                        }
+                                    };
                                     if let Err(e) = res {
                                         let caught = ctx.catch();
                                         let exc = caught.as_exception();
