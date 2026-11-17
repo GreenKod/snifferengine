@@ -191,42 +191,65 @@ impl JsPlugin {
                         .map(|f| rquickjs::Persistent::save(&ctx, f))
                 });
 
+            // Cache the `onEvent` handler as well: resolving it by name in the global
+            // object costs a hash-table lookup for every UI event. If it is not defined
+            // at init time we retry lazily, so plugins that install it later still work.
+            let mut on_event_fn: Option<rquickjs::Persistent<rquickjs::Function<'static>>> =
+                context.with(|ctx| {
+                    ctx.globals()
+                        .get::<_, rquickjs::Function>("onEvent")
+                        .ok()
+                        .map(|f| rquickjs::Persistent::save(&ctx, f))
+                });
+
             let mut gc_count = 0u32;
             let mut is_suspended = false;
             while let Ok(msg) = msg_rx.recv() {
                 match msg {
                     PluginMsg::Event(event) => {
-                        let _guard = DeadlineGuard::arm(&deadline_ms);
-                        context.with(|ctx| {
-                            let globals = ctx.globals();
-                            if let Ok(on_event_fn) = globals.get::<_, rquickjs::Function>("onEvent") {
-                                let event_json =
-                                    crate::js::events::serialize_ui_event_to_json(&event, &plugin_id);
-                                let res: Result<rquickjs::Value, _> = on_event_fn.call((event_json,));
-                                if let Err(e) = res {
-                                    let caught = ctx.catch();
-                                    let exc = caught.as_exception();
-                                    let msg = exc.as_ref().and_then(|x| x.message()).unwrap_or_default();
-                                    let stack = exc.as_ref().and_then(|x| x.stack()).unwrap_or_default();
-                                    if msg.to_lowercase().contains("interrupted") {
-                                        crate::logger::error(
-                                            &plugin_id,
-                                            "Security Watchdog: onEvent exceeded 500ms deadline and was interrupted.",
-                                        );
-                                    } else {
-                                        let err_msg = if !msg.is_empty() {
-                                            format!("{msg}\n{stack}")
+                        if on_event_fn.is_none() {
+                            on_event_fn = context.with(|ctx| {
+                                ctx.globals()
+                                    .get::<_, rquickjs::Function>("onEvent")
+                                    .ok()
+                                    .map(|f| rquickjs::Persistent::save(&ctx, f))
+                            });
+                        }
+                        if let Some(ref on_event_fn) = on_event_fn {
+                            let _guard = DeadlineGuard::arm(&deadline_ms);
+                            let event_json =
+                                crate::js::events::serialize_ui_event_to_json(&event, &plugin_id);
+                            context.with(|ctx| {
+                                if let Ok(handler) = on_event_fn.clone().restore(&ctx) {
+                                    let res: Result<rquickjs::Value, _> =
+                                        handler.call((event_json,));
+                                    if let Err(e) = res {
+                                        let caught = ctx.catch();
+                                        let exc = caught.as_exception();
+                                        let msg =
+                                            exc.as_ref().and_then(|x| x.message()).unwrap_or_default();
+                                        let stack =
+                                            exc.as_ref().and_then(|x| x.stack()).unwrap_or_default();
+                                        if msg.to_lowercase().contains("interrupted") {
+                                            crate::logger::error(
+                                                &plugin_id,
+                                                "Security Watchdog: onEvent exceeded 500ms deadline and was interrupted.",
+                                            );
                                         } else {
-                                            e.to_string()
-                                        };
-                                        crate::logger::error(
-                                            &plugin_id,
-                                            &format!("onEvent error: {err_msg}"),
-                                        );
+                                            let err_msg = if !msg.is_empty() {
+                                                format!("{msg}\n{stack}")
+                                            } else {
+                                                e.to_string()
+                                            };
+                                            crate::logger::error(
+                                                &plugin_id,
+                                                &format!("onEvent error: {err_msg}"),
+                                            );
+                                        }
                                     }
                                 }
-                            }
-                        });
+                            });
+                        }
                     }
                     PluginMsg::Tick => {
                         if !is_suspended {
