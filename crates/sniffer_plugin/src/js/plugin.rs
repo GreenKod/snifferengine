@@ -42,7 +42,7 @@ const JS_PLUGIN_SUBSCRIPTIONS: [WidgetId; 1] = [WILDCARD_WIDGET_ID];
 #[allow(dead_code)]
 pub struct JsPlugin {
     pub(crate) msg_tx: Sender<PluginMsg>,
-    pub(crate) ui_tree: Arc<Mutex<Option<Element>>>,
+    pub(crate) ui_tree: Arc<Mutex<Option<Arc<Element>>>>,
     pub(crate) has_active_timers: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -69,7 +69,7 @@ pub struct JsPluginConfig {
 impl JsPlugin {
     pub fn new(config: JsPluginConfig) -> Result<Self, String> {
         let (msg_tx, msg_rx) = unbounded::<PluginMsg>();
-        let ui_tree = Arc::new(Mutex::new(config.cached_ui));
+        let ui_tree = Arc::new(Mutex::new(config.cached_ui.map(Arc::new)));
         let ui_tree_worker = ui_tree.clone();
         let has_active_timers = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let has_active_timers_worker = Arc::clone(&has_active_timers);
@@ -422,7 +422,8 @@ impl UiPlugin for JsPlugin {
 
     fn build_ui(&self) -> Option<Element> {
         if let Ok(lock) = self.ui_tree.lock() {
-            return lock.clone();
+            // The platform owns the tree it renders, so hand out a snapshot there.
+            return lock.as_ref().map(|tree| (**tree).clone());
         }
         None
     }

@@ -30,7 +30,9 @@ fn enqueue_cache_write(path: PathBuf, bytes: Vec<u8>) {
 }
 
 pub enum UiMutation {
-    SetUi(Element),
+    /// Replaces the whole tree. Shared instead of owned so the freshly parsed tree
+    /// does not have to be deep-cloned on the way into the mutation buffer.
+    SetUi(Arc<Element>),
     UpdateStyle {
         id: String,
         property: String,
@@ -42,7 +44,9 @@ pub enum UiMutation {
     },
     InsertChild {
         parent_id: String,
-        child: Element,
+        /// Boxed to keep the mutation buffer small; the child is moved into the tree
+        /// on flush, so the extra indirection costs one allocation and no copy.
+        child: Box<Element>,
     },
     RemoveNode {
         id: String,
@@ -55,7 +59,7 @@ pub struct MutationBuffer {
 }
 
 impl MutationBuffer {
-    pub fn flush(&self, ui_tree: &Arc<Mutex<Option<Element>>>) {
+    pub fn flush(&self, ui_tree: &Arc<Mutex<Option<Arc<Element>>>>) {
         let mut muts = match self.mutations.lock() {
             Ok(guard) => guard,
             Err(_) => return,
@@ -68,6 +72,7 @@ impl MutationBuffer {
             for m in muts.drain(..) {
                 match m {
                     UiMutation::SetUi(new_elem) => {
+                        // The shared tree is replaced as-is; no deep copy happens here.
                         *tree_lock = Some(new_elem);
                     }
                     UiMutation::UpdateStyle {
@@ -75,23 +80,23 @@ impl MutationBuffer {
                         property,
                         value,
                     } => {
-                        if let Some(ref mut root) = *tree_lock {
-                            root.mutate_style(&id, &property, &value);
+                        if let Some(root) = tree_lock.as_mut() {
+                            Arc::make_mut(root).mutate_style(&id, &property, &value);
                         }
                     }
                     UiMutation::SetText { id, text } => {
-                        if let Some(ref mut root) = *tree_lock {
-                            root.mutate_text(&id, &text);
+                        if let Some(root) = tree_lock.as_mut() {
+                            Arc::make_mut(root).mutate_text(&id, &text);
                         }
                     }
                     UiMutation::InsertChild { parent_id, child } => {
-                        if let Some(ref mut root) = *tree_lock {
-                            root.insert_child(&parent_id, child);
+                        if let Some(root) = tree_lock.as_mut() {
+                            Arc::make_mut(root).insert_child(&parent_id, *child);
                         }
                     }
                     UiMutation::RemoveNode { id } => {
-                        if let Some(ref mut root) = *tree_lock {
-                            root.remove_node(&id);
+                        if let Some(root) = tree_lock.as_mut() {
+                            Arc::make_mut(root).remove_node(&id);
                         }
                     }
                 }
@@ -106,7 +111,7 @@ impl MutationBuffer {
 pub fn register_ui_bindings<'js>(
     ctx: &Ctx<'js>,
     globals: &Object<'js>,
-    ui_tree: Arc<Mutex<Option<Element>>>,
+    ui_tree: Arc<Mutex<Option<Arc<Element>>>>,
     plugin_permissions: &[String],
     granted_permissions: Arc<Mutex<Vec<String>>>,
     cache_path: Option<std::path::PathBuf>,
@@ -118,15 +123,18 @@ pub fn register_ui_bindings<'js>(
     let tree_set_ui = ui_tree.clone();
     let cache_path_apply = cache_path;
     let apply_element = Arc::new(move |parsed: Element| {
-        if let Ok(mut lock) = mut_set_ui.mutations.lock() {
-            lock.push(UiMutation::SetUi(parsed.clone()));
-        }
-        mut_set_ui.flush(&tree_set_ui);
+        // Build the shared tree once: the mutation buffer takes ownership of this
+        // handle, so no deep copy of the element tree is made on the way in.
+        let parsed = Arc::new(parsed);
         if let Some(path) = cache_path_apply.clone()
-            && let Ok(bytes) = postcard::to_allocvec(&parsed)
+            && let Ok(bytes) = postcard::to_allocvec(parsed.as_ref())
         {
             enqueue_cache_write(path, bytes);
         }
+        if let Ok(mut lock) = mut_set_ui.mutations.lock() {
+            lock.push(UiMutation::SetUi(parsed));
+        }
+        mut_set_ui.flush(&tree_set_ui);
     });
 
     // host_set_ui (legacy JSON string binder)
@@ -303,7 +311,7 @@ pub fn register_ui_bindings<'js>(
                 if let Ok(mut lock) = mut_insert_child.mutations.lock() {
                     lock.push(UiMutation::InsertChild {
                         parent_id,
-                        child: parsed_child,
+                        child: Box::new(parsed_child),
                     });
                 }
                 mut_insert_child.flush(&tree_insert_child);

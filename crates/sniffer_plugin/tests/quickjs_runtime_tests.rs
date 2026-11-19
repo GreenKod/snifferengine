@@ -292,8 +292,8 @@ fn test_host_set_ui_fast_object_and_string_binding() {
         tree.is_some(),
         "ui_tree should be populated by host_set_ui_fast"
     );
-    if let Some(Element::Container { id, children, .. }) = tree {
-        assert_eq!(id, Some("fast_container".to_string()));
+    if let Some(Element::Container { id, children, .. }) = tree.as_deref() {
+        assert_eq!(id.as_deref(), Some("fast_container"));
         assert_eq!(children.len(), 1);
         if let Element::Label { text, .. } = &children[0] {
             assert_eq!(text, "Direct Object AST");
@@ -320,8 +320,8 @@ fn test_host_set_ui_fast_object_and_string_binding() {
 
     let tree2 = ui_tree.lock().unwrap().clone();
     assert!(tree2.is_some());
-    if let Some(Element::Label { id, text, .. }) = tree2 {
-        assert_eq!(id, Some("string_label".to_string()));
+    if let Some(Element::Label { id, text, .. }) = tree2.as_deref() {
+        assert_eq!(id.as_deref(), Some("string_label"));
         assert_eq!(text, "String fallback");
     } else {
         panic!("Expected Label element");
@@ -435,9 +435,9 @@ fn test_host_set_ui_fast_direct_deserialization_bypasses_json_stringify() {
         style,
         children,
         ..
-    }) = tree
+    }) = tree.as_deref()
     {
-        assert_eq!(id, Some("bypass_stringify_root".to_string()));
+        assert_eq!(id.as_deref(), Some("bypass_stringify_root"));
         assert_eq!(style.opacity, 0.85);
         assert_eq!(children.len(), 1);
         if let Element::Label { id, text, style } = &children[0] {
@@ -683,7 +683,7 @@ fn test_large_ui_tree_100_plus_elements_gc_and_memory_benchmark() {
         // Verify that the tree produced in Rust by the fast path contains all 120 children
         let tree_guard = ui_tree.lock().unwrap();
         let tree = tree_guard.as_ref().expect("ui_tree must be populated");
-        if let Element::Container { id, children, .. } = tree {
+        if let Element::Container { id, children, .. } = tree.as_ref() {
             assert_eq!(id, &Some("catalog_view_root".to_string()));
             assert_eq!(
                 children.len(),
