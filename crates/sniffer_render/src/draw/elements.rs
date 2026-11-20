@@ -48,48 +48,46 @@ pub(crate) fn draw_element_contents(
     let mut rendered_children = 0;
     match element {
         Element::Container { children, .. } | Element::SharedView { children, .. } => {
-            let is_indicator_container = element.id() == Some("page_indicator_container");
-            let indicator_dots =
-                if is_indicator_container && let Some(page_float) = page_indicator_float {
-                    let is_landscape =
-                        base_style.flex_direction == sniffer_core::style::FlexDirection::Column;
-                    let vmin_px = metrics.physical_width.min(metrics.physical_height) / 100.0;
-                    Some(sniffer_core::physics::indicator::compute_indicator_dots(
-                        children.len(),
-                        page_float,
-                        vmin_px,
-                        is_landscape,
-                        rect,
-                    ))
-                } else {
-                    None
-                };
-
-            if let Some(dots) = indicator_dots {
-                for (dot_rect, dot_bg) in dots {
+            for (child_el, child_lay) in children.iter().zip(layout.children.iter()) {
+                rendered_children += draw_ui_node(
+                    renderer,
+                    child_el,
+                    child_lay,
+                    metrics,
+                    style_map,
+                    data_map,
+                    transition_manager,
+                    final_alpha,
+                    accumulated_scroll_x,
+                    accumulated_scroll_y,
+                    accumulated_tx,
+                    accumulated_ty,
+                    is_animating,
+                    scroll_offsets,
+                    page_indicator_float,
+                );
+            }
+        }
+        Element::PageIndicator {
+            page_count,
+            orientation,
+            ..
+        } => {
+            let count = page_count.unwrap_or(0) as usize;
+            if count > 0 {
+                let vmin_px = metrics.physical_width.min(metrics.physical_height) / 100.0;
+                // Before the physics pipeline reports a page position the
+                // indicator rests on the first page, matching the initial
+                // state of a freshly mounted pager.
+                let page_float = page_indicator_float.unwrap_or(0.0);
+                let vertical =
+                    *orientation == sniffer_core::types::PageIndicatorOrientation::Vertical;
+                for (dot_rect, dot_bg) in sniffer_core::physics::indicator::compute_indicator_dots(
+                    count, page_float, vmin_px, vertical, rect,
+                ) {
                     let radius = (dot_rect.width.min(dot_rect.height)) * 0.5;
                     renderer.draw_rect(dot_rect, dot_bg, radius, 0.0, None);
                     rendered_children += 1;
-                }
-            } else {
-                for (child_el, child_lay) in children.iter().zip(layout.children.iter()) {
-                    rendered_children += draw_ui_node(
-                        renderer,
-                        child_el,
-                        child_lay,
-                        metrics,
-                        style_map,
-                        data_map,
-                        transition_manager,
-                        final_alpha,
-                        accumulated_scroll_x,
-                        accumulated_scroll_y,
-                        accumulated_tx,
-                        accumulated_ty,
-                        is_animating,
-                        scroll_offsets,
-                        page_indicator_float,
-                    );
                 }
             }
         }

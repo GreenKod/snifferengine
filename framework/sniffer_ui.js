@@ -386,6 +386,27 @@ function SharedView(id, targetPluginId, slotName, style, children) {
     };
 }
 
+// Declarative pager indicator: renders `page_count` interpolated dots driven
+// by the active snap-scrolling pager. Accepts ("id", opts) or a single opts
+// object carrying { id, page_count, orientation, style }.
+function PageIndicator(idOrOpts, opts) {
+    let id = idOrOpts;
+    if (idOrOpts && typeof idOrOpts === "object" && !Array.isArray(idOrOpts)) {
+        opts = idOrOpts;
+        id = opts.id !== undefined ? opts.id : null;
+    }
+    opts = opts || {};
+
+    return {
+        PageIndicator: {
+            id: id,
+            page_count: opts.page_count !== undefined ? Number(opts.page_count) : null,
+            orientation: opts.orientation !== undefined ? String(opts.orientation) : "Horizontal",
+            style: opts.style || {},
+        },
+    };
+}
+
 function CardWidget(opts) {
     opts = opts || {};
     const id = opts.id || "card-widget";

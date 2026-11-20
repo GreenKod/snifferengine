@@ -131,6 +131,11 @@ fn find_clicked_button_with_scroll_recursive(
             // button target itself; its children remain eligible.
             None
         }
+        Element::PageIndicator { .. } => {
+            // A declarative pager indicator is purely decorative and never a
+            // pointer hit-test target; taps pass through to what lies behind.
+            None
+        }
         Element::Label { id, .. }
         | Element::Image { id, .. }
         | Element::TextInput { id, .. }

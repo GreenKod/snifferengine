@@ -72,7 +72,8 @@ type UIElement =
     | { ScrollView: { id?: string | null; style?: Style; children?: UIElement[]; scroll_x?: number; scroll_y?: number } }
     | { Checkbox: { id?: string | null; checked: boolean; label?: string; style?: Style } }
     | { Slider: { id?: string | null; value: number; min?: number; max?: number; style?: Style } }
-    | { ProgressBar: { id?: string | null; progress: number; style?: Style } };
+    | { ProgressBar: { id?: string | null; progress: number; style?: Style } }
+    | { PageIndicator: { id?: string | null; page_count?: number | null; orientation?: "Horizontal" | "Vertical"; style?: Style } };
 
 interface AppInfo {
     name: string;
@@ -260,6 +261,16 @@ declare function Checkbox(id?: string | null, checked?: boolean, label?: string,
 declare function Slider(id?: string | null, value?: number, min?: number, max?: number, style?: Style): UIElement;
 declare function ProgressBar(id?: string | null, progress?: number, style?: Style): UIElement;
 declare function SharedView(id?: string | null, targetPluginId?: string | null, slotName?: string | null, style?: Style, children?: UIElement[]): UIElement;
+declare function PageIndicator(idOrOpts?: string | null | {
+    id?: string | null;
+    page_count?: number;
+    orientation?: "Horizontal" | "Vertical";
+    style?: Style;
+}, opts?: {
+    page_count?: number;
+    orientation?: "Horizontal" | "Vertical";
+    style?: Style;
+}): UIElement;
 
 declare function requestSharedView(targetPluginId: string, slotName: string, payload?: any, timeoutMs?: number): Promise<{ accepted: boolean; status: string; reason?: string; uiTree?: UIElement }>;
 declare function acceptSharedView(invitationId: string, uiTree: UIElement): void;

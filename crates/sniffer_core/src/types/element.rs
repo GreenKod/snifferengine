@@ -28,6 +28,17 @@ pub struct ScrollDismissConfig {
     pub action_event: Option<String>,
 }
 
+/// Dot stacking direction of a declarative pager indicator.
+///
+/// `Horizontal` lays dots out in a row (portrait pages), `Vertical` stacks
+/// them in a column (landscape pages).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PageIndicatorOrientation {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
 /// Platform-agnostic UI tree node.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Element {
@@ -109,6 +120,20 @@ pub enum Element {
         style: Style,
         children: ElementChildren,
     },
+    /// Declarative pager indicator: renders `page_count` interpolated dots
+    /// for the active snap-scrolling pager, driven by the physics pipeline's
+    /// fractional page position at draw time. Decorative by type: it is never
+    /// a pointer hit-test target.
+    PageIndicator {
+        id: Option<String>,
+        /// Total number of pages (dots) to render. `None`/0 renders nothing.
+        #[serde(default)]
+        page_count: Option<u32>,
+        /// Dot stacking direction inside the component rect.
+        #[serde(default)]
+        orientation: PageIndicatorOrientation,
+        style: Style,
+    },
 }
 
 impl Element {
@@ -124,7 +149,8 @@ impl Element {
             | Self::Checkbox { style, .. }
             | Self::Slider { style, .. }
             | Self::ProgressBar { style, .. }
-            | Self::SharedView { style, .. } => style,
+            | Self::SharedView { style, .. }
+            | Self::PageIndicator { style, .. } => style,
         }
     }
 
@@ -140,7 +166,8 @@ impl Element {
             | Self::Checkbox { id, .. }
             | Self::Slider { id, .. }
             | Self::ProgressBar { id, .. }
-            | Self::SharedView { id, .. } => id.as_deref(),
+            | Self::SharedView { id, .. }
+            | Self::PageIndicator { id, .. } => id.as_deref(),
         }
     }
 
@@ -156,7 +183,8 @@ impl Element {
                 | Self::Checkbox { style, .. }
                 | Self::Slider { style, .. }
                 | Self::ProgressBar { style, .. }
-                | Self::SharedView { style, .. } => style,
+                | Self::SharedView { style, .. }
+                | Self::PageIndicator { style, .. } => style,
             };
 
             match property {

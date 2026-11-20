@@ -1,90 +1,7 @@
-use crate::layout::LayoutNode;
-use crate::style::FlexDirection;
-use crate::types::Element;
-
-#[allow(
-    clippy::cast_possible_wrap,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::many_single_char_names
-)]
-fn update_indicator_element_tree(
-    element: &mut Element,
-    page_float: f32,
-    vmin_px: f32,
-) -> Option<bool> {
-    if let Element::Container {
-        id,
-        children,
-        style,
-        ..
-    } = element
-    {
-        if let Some(id_str) = id {
-            if id_str == "page_indicator_container" {
-                let is_landscape = style.flex_direction == FlexDirection::Column;
-                let mut changed = false;
-                for (p, child_el) in children.iter_mut().enumerate() {
-                    let dist = (page_float - p as f32).abs();
-                    let raw_activity = (1.0 - dist).clamp(0.0, 1.0);
-                    // Hermite smoothstep for fluid visual transition without linear harshness
-                    let activity = raw_activity * raw_activity * (3.0 - 2.0 * raw_activity);
-
-                    if let Element::Container {
-                        style: dot_style, ..
-                    } = child_el
-                    {
-                        // Smoothly interpolate color between inactive (#55FFFFFF) and active (#00E5FF)
-                        let a = (0x55 as f32 + (0xFF - 0x55) as f32 * activity).round() as u32;
-                        let r = (0xFF as f32 * (1.0 - activity)).round() as u32;
-                        let g = (0xFF as f32 - (0xFF - 0xE5) as f32 * activity).round() as u32;
-                        let b = 0xFF_u32;
-                        let new_color = Some((a << 24) | (r << 16) | (g << 8) | b);
-
-                        if dot_style.background_color != new_color {
-                            dot_style.background_color = new_color;
-                            changed = true;
-                        }
-
-                        if (dot_style.transform.scale - 1.0).abs() > 0.001 {
-                            dot_style.transform.scale = 1.0;
-                            changed = true;
-                        }
-
-                        let dot_pill = (1.6 + 2.0 * activity) * vmin_px;
-                        let dot_base = 1.6 * vmin_px;
-                        if is_landscape {
-                            let new_w = crate::style::Dimension::Pixels(dot_base);
-                            let new_h = crate::style::Dimension::Pixels(dot_pill);
-                            if dot_style.width != new_w || dot_style.height != new_h {
-                                dot_style.width = new_w;
-                                dot_style.height = new_h;
-                                changed = true;
-                            }
-                        } else {
-                            let new_w = crate::style::Dimension::Pixels(dot_pill);
-                            let new_h = crate::style::Dimension::Pixels(dot_base);
-                            if dot_style.width != new_w || dot_style.height != new_h {
-                                dot_style.width = new_w;
-                                dot_style.height = new_h;
-                                changed = true;
-                            }
-                        }
-                    }
-                }
-                return Some(changed);
-            }
-        }
-        for child in children {
-            if let Some(changed) = update_indicator_element_tree(child, page_float, vmin_px) {
-                return Some(changed);
-            }
-        }
-    }
-    None
-}
-
-/// Computes geometry and interpolated colors for pager indicator dots without tree mutation.
+/// Computes geometry and interpolated colors for pager indicator dots.
+///
+/// The fractional `page_float` supplied by the physics pipeline drives dot
+/// pill stretching and tinting at draw time, without any tree mutation.
 #[must_use]
 #[allow(
     clippy::cast_possible_wrap,
@@ -96,7 +13,7 @@ pub fn compute_indicator_dots(
     count: usize,
     page_float: f32,
     vmin_px: f32,
-    is_landscape: bool,
+    vertical: bool,
     container_rect: crate::Rect,
 ) -> Vec<(crate::Rect, u32)> {
     if count == 0 {
@@ -106,7 +23,7 @@ pub fn compute_indicator_dots(
     let dot_base = 1.6 * vmin_px;
     let mut results = Vec::with_capacity(count);
 
-    if is_landscape {
+    if vertical {
         let mut total_h = 0.0_f32;
         let mut dot_heights = Vec::with_capacity(count);
         for p in 0..count {
@@ -160,78 +77,4 @@ pub fn compute_indicator_dots(
         }
     }
     results
-}
-
-fn update_indicator_layout_tree(
-    layout_node: &mut LayoutNode,
-    page_float: f32,
-    vmin_px: f32,
-) -> bool {
-    const INDICATOR_CONTAINER_HASH: u64 = crate::ui::widget::fnv1a(b"page_indicator_container");
-    if layout_node.widget_id == Some(INDICATOR_CONTAINER_HASH) {
-        let is_landscape = layout_node.rect.height > layout_node.rect.width;
-        let count = layout_node.children.len();
-        if count == 0 {
-            return false;
-        }
-
-        let dots =
-            compute_indicator_dots(count, page_float, vmin_px, is_landscape, layout_node.rect);
-        let mut layout_changed = false;
-
-        for (p, child) in layout_node.children.iter_mut().enumerate() {
-            if let Some(&(rect, _new_bg)) = dots.get(p) {
-                if (child.rect.x - rect.x).abs() > 0.05
-                    || (child.rect.y - rect.y).abs() > 0.05
-                    || (child.rect.width - rect.width).abs() > 0.05
-                    || (child.rect.height - rect.height).abs() > 0.05
-                {
-                    child.rect = rect;
-                    layout_changed = true;
-                }
-            }
-        }
-        return layout_changed;
-    }
-
-    for child in &mut layout_node.children {
-        if update_indicator_layout_tree(child, page_float, vmin_px) {
-            return true;
-        }
-    }
-    false
-}
-
-#[allow(
-    clippy::cast_possible_wrap,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
-pub fn update_indicator_dots_tracking(
-    element: &mut Element,
-    mut layout_tree: Option<&mut LayoutNode>,
-    page_float: f32,
-    vmin_px: f32,
-) -> bool {
-    let mut changed = false;
-    if let Some(c) = update_indicator_element_tree(element, page_float, vmin_px) {
-        if c {
-            changed = true;
-        }
-    }
-    if let Some(ref mut layout_node) = layout_tree {
-        if update_indicator_layout_tree(layout_node, page_float, vmin_px) {
-            changed = true;
-        }
-    }
-    changed
-}
-
-#[allow(clippy::cast_possible_wrap)]
-pub fn update_indicator_dots_in_element(
-    element: &mut Element,
-    active_page: i32,
-    vmin_px: f32,
-) -> bool {
-    update_indicator_dots_tracking(element, None, active_page as f32, vmin_px)
 }

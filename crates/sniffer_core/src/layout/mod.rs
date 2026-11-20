@@ -110,7 +110,12 @@ pub fn collect_layout_rects<'a, S: std::hash::BuildHasher>(
 }
 
 #[allow(clippy::too_many_lines)]
-fn build_taffy_tree(taffy: &mut TaffyTree, element: &Element, measurer: &TextMeasurer) -> NodeId {
+fn build_taffy_tree(
+    taffy: &mut TaffyTree,
+    element: &Element,
+    measurer: &TextMeasurer,
+    vmin_px: f32,
+) -> NodeId {
     let mut style: Style = Style::default();
     let el_style = element.style();
 
@@ -187,7 +192,7 @@ fn build_taffy_tree(taffy: &mut TaffyTree, element: &Element, measurer: &TextMea
         | Element::SharedView { children, .. } => {
             let mut child_nodes = Vec::with_capacity(children.len());
             for c in children {
-                child_nodes.push(build_taffy_tree(taffy, c, measurer));
+                child_nodes.push(build_taffy_tree(taffy, c, measurer, vmin_px));
             }
             taffy.new_with_children(style, &child_nodes).unwrap()
         }
@@ -262,6 +267,32 @@ fn build_taffy_tree(taffy: &mut TaffyTree, element: &Element, measurer: &TextMea
             }
             if el_style.height == crate::style::Dimension::Auto {
                 style.size.height = Dimension::Length(24.0);
+            }
+            taffy.new_leaf(style).unwrap()
+        }
+        Element::PageIndicator {
+            page_count,
+            orientation,
+            ..
+        } => {
+            if page_count.is_some_and(|count| count > 0) {
+                // Intrinsic size for the auto-sized cross axis: the largest
+                // interpolated dot pill (3.6 vmin), mirroring the footprint
+                // the legacy placeholder-dot children used to give a container.
+                let cross_extent = 3.6 * vmin_px;
+                match orientation {
+                    crate::types::PageIndicatorOrientation::Vertical
+                        if el_style.width == crate::style::Dimension::Auto =>
+                    {
+                        style.size.width = Dimension::Length(cross_extent);
+                    }
+                    crate::types::PageIndicatorOrientation::Horizontal
+                        if el_style.height == crate::style::Dimension::Auto =>
+                    {
+                        style.size.height = Dimension::Length(cross_extent);
+                    }
+                    _ => {}
+                }
             }
             taffy.new_leaf(style).unwrap()
         }
@@ -341,7 +372,9 @@ pub fn calculate_layout_with_taffy(
     y_offset: f32,
 ) -> LayoutNode {
     taffy.clear();
-    let root = build_taffy_tree(taffy, element, &GLOBAL_TEXT_MEASURER);
+    // Screen-relative vmin used for declarative component intrinsic sizing.
+    let vmin_px = parent_size.width.min(parent_size.height) / 100.0;
+    let root = build_taffy_tree(taffy, element, &GLOBAL_TEXT_MEASURER, vmin_px);
 
     // Create an invisible root style to enforce parent size
     let root_style = Style {
