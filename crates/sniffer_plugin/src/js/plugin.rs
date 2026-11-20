@@ -2,8 +2,10 @@ use crate::UiPlugin;
 use crate::dev_err;
 use crate::js::HostApiConfig;
 use crate::js::engine::{DeadlineGuard, PluginEngine, create_engine};
+use crate::js::events::EventPayloadFormat;
 use crate::js::register_host_api;
 use crate::registry::{ApiMap, BroadcastQueue};
+use crate::r#trait::WILDCARD_WIDGET_ID;
 use crossbeam_channel::{Sender, unbounded};
 use rquickjs::Value;
 use sniffer_core::WidgetId;
@@ -33,11 +35,14 @@ pub enum PluginMsg {
     Unload,
 }
 
+/// JavaScript plugins resolve widget IDs at runtime inside `onEvent`, so they
+/// subscribe to the wildcard rather than enumerating IDs up front.
+const JS_PLUGIN_SUBSCRIPTIONS: [WidgetId; 1] = [WILDCARD_WIDGET_ID];
+
 #[allow(dead_code)]
 pub struct JsPlugin {
     pub(crate) msg_tx: Sender<PluginMsg>,
-    pub(crate) ui_tree: Arc<Mutex<Option<Element>>>,
-    pub(crate) subscriptions: Vec<WidgetId>,
+    pub(crate) ui_tree: Arc<Mutex<Option<Arc<Element>>>>,
     pub(crate) has_active_timers: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -64,7 +69,7 @@ pub struct JsPluginConfig {
 impl JsPlugin {
     pub fn new(config: JsPluginConfig) -> Result<Self, String> {
         let (msg_tx, msg_rx) = unbounded::<PluginMsg>();
-        let ui_tree = Arc::new(Mutex::new(config.cached_ui));
+        let ui_tree = Arc::new(Mutex::new(config.cached_ui.map(Arc::new)));
         let ui_tree_worker = ui_tree.clone();
         let has_active_timers = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let has_active_timers_worker = Arc::clone(&has_active_timers);
@@ -187,42 +192,99 @@ impl JsPlugin {
                         .map(|f| rquickjs::Persistent::save(&ctx, f))
                 });
 
+            // Cache the `onEvent` handler as well: resolving it by name in the global
+            // object costs a hash-table lookup for every UI event. If it is not defined
+            // at init time we retry lazily, so plugins that install it later still work.
+            let mut on_event_fn: Option<rquickjs::Persistent<rquickjs::Function<'static>>> =
+                context.with(|ctx| {
+                    ctx.globals()
+                        .get::<_, rquickjs::Function>("onEvent")
+                        .ok()
+                        .map(|f| rquickjs::Persistent::save(&ctx, f))
+                });
+
+            // Pick the event payload format once: object-aware handlers (the framework
+            // dispatcher, or plugins that opt in) skip the JSON string round-trip.
+            let mut payload_format =
+                context.with(|ctx| crate::js::events::detect_payload_format(&ctx));
+
             let mut gc_count = 0u32;
             let mut is_suspended = false;
             while let Ok(msg) = msg_rx.recv() {
                 match msg {
                     PluginMsg::Event(event) => {
-                        let _guard = DeadlineGuard::arm(&deadline_ms);
-                        context.with(|ctx| {
-                            let globals = ctx.globals();
-                            if let Ok(on_event_fn) = globals.get::<_, rquickjs::Function>("onEvent") {
-                                let event_json =
-                                    crate::js::events::serialize_ui_event_to_json(&event, &plugin_id);
-                                let res: Result<rquickjs::Value, _> = on_event_fn.call((event_json,));
-                                if let Err(e) = res {
-                                    let caught = ctx.catch();
-                                    let exc = caught.as_exception();
-                                    let msg = exc.as_ref().and_then(|x| x.message()).unwrap_or_default();
-                                    let stack = exc.as_ref().and_then(|x| x.stack()).unwrap_or_default();
-                                    if msg.to_lowercase().contains("interrupted") {
-                                        crate::logger::error(
-                                            &plugin_id,
-                                            "Security Watchdog: onEvent exceeded 500ms deadline and was interrupted.",
-                                        );
-                                    } else {
-                                        let err_msg = if !msg.is_empty() {
-                                            format!("{msg}\n{stack}")
+                        if on_event_fn.is_none() {
+                            on_event_fn = context.with(|ctx| {
+                                ctx.globals()
+                                    .get::<_, rquickjs::Function>("onEvent")
+                                    .ok()
+                                    .map(|f| rquickjs::Persistent::save(&ctx, f))
+                            });
+                            if on_event_fn.is_some() {
+                                // The handler was installed after script evaluation, so
+                                // re-resolve the bridge format for the late binding.
+                                payload_format = context
+                                    .with(|ctx| crate::js::events::detect_payload_format(&ctx));
+                            }
+                        }
+                        if let Some(ref on_event_fn) = on_event_fn {
+                            let _guard = DeadlineGuard::arm(&deadline_ms);
+                            crate::js::events::log_dispatch(&event, &plugin_id);
+                            context.with(|ctx| {
+                                if let Ok(handler) = on_event_fn.clone().restore(&ctx) {
+                                    let res: Result<rquickjs::Value, _> = match payload_format {
+                                        EventPayloadFormat::Object => {
+                                            match crate::js::events::build_ui_event_object(
+                                                &ctx, &event,
+                                            ) {
+                                                Ok(payload) => handler.call((payload,)),
+                                                Err(err) => {
+                                                    // Object construction should not fail;
+                                                    // degrade to the legacy contract
+                                                    // instead of dropping the event.
+                                                    dev_err!(
+                                                        "Fast event bridge unavailable, falling back to JSON: {err}"
+                                                    );
+                                                    let payload = crate::js::events::serialize_ui_event_to_json(&event);
+                                                    handler.call((payload,))
+                                                }
+                                            }
+                                        }
+                                        EventPayloadFormat::JsonString => {
+                                            let payload =
+                                                crate::js::events::serialize_ui_event_to_json(
+                                                    &event,
+                                                );
+                                            handler.call((payload,))
+                                        }
+                                    };
+                                    if let Err(e) = res {
+                                        let caught = ctx.catch();
+                                        let exc = caught.as_exception();
+                                        let msg =
+                                            exc.as_ref().and_then(|x| x.message()).unwrap_or_default();
+                                        let stack =
+                                            exc.as_ref().and_then(|x| x.stack()).unwrap_or_default();
+                                        if msg.to_lowercase().contains("interrupted") {
+                                            crate::logger::error(
+                                                &plugin_id,
+                                                "Security Watchdog: onEvent exceeded 500ms deadline and was interrupted.",
+                                            );
                                         } else {
-                                            e.to_string()
-                                        };
-                                        crate::logger::error(
-                                            &plugin_id,
-                                            &format!("onEvent error: {err_msg}"),
-                                        );
+                                            let err_msg = if !msg.is_empty() {
+                                                format!("{msg}\n{stack}")
+                                            } else {
+                                                e.to_string()
+                                            };
+                                            crate::logger::error(
+                                                &plugin_id,
+                                                &format!("onEvent error: {err_msg}"),
+                                            );
+                                        }
                                     }
                                 }
-                            }
-                        });
+                            });
+                        }
                     }
                     PluginMsg::Tick => {
                         if !is_suspended {
@@ -325,6 +387,11 @@ impl JsPlugin {
                     }
                     PluginMsg::Unload => {
                         crate::logger::flush();
+                        // Persist any debounced cache write right away so shutdown
+                        // cannot lose the final UI state to the debounce timer.
+                        if let Some(ref path) = cache_path {
+                            crate::js::bindings_ui::flush_cache_write_now(path);
+                        }
                         runtime.run_gc();
                         break;
                     }
@@ -335,7 +402,6 @@ impl JsPlugin {
         Ok(Self {
             msg_tx,
             ui_tree,
-            subscriptions: vec![],
             has_active_timers,
         })
     }
@@ -356,12 +422,13 @@ impl JsPlugin {
 
 impl UiPlugin for JsPlugin {
     fn subscriptions(&self) -> &[WidgetId] {
-        &[]
+        &JS_PLUGIN_SUBSCRIPTIONS
     }
 
     fn build_ui(&self) -> Option<Element> {
         if let Ok(lock) = self.ui_tree.lock() {
-            return lock.clone();
+            // The platform owns the tree it renders, so hand out a snapshot there.
+            return lock.as_ref().map(|tree| (**tree).clone());
         }
         None
     }
@@ -420,7 +487,6 @@ mod tests {
         let plugin = JsPlugin {
             msg_tx: tx,
             ui_tree: Arc::new(Mutex::new(None)),
-            subscriptions: vec![],
             has_active_timers: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
 
@@ -443,5 +509,21 @@ mod tests {
         assert!(!UiPlugin::has_active_timers(&plugin));
         plugin.on_tick();
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn js_plugin_subscribes_to_every_widget_event_via_wildcard() {
+        let (tx, _rx) = unbounded();
+        let plugin = JsPlugin {
+            msg_tx: tx,
+            ui_tree: Arc::new(Mutex::new(None)),
+            has_active_timers: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+
+        assert_eq!(
+            UiPlugin::subscriptions(&plugin),
+            &[WILDCARD_WIDGET_ID],
+            "JS onEvent performs its own routing, so it must receive all scoped events"
+        );
     }
 }

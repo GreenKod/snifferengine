@@ -25,7 +25,7 @@ pub struct HostApiConfig {
     pub is_master: bool,
     pub msg_tx: Sender<PluginMsg>,
     pub vault: Arc<DataVault>,
-    pub ui_tree: Arc<Mutex<Option<Element>>>,
+    pub ui_tree: Arc<Mutex<Option<Arc<Element>>>>,
     pub action_queue: Arc<Mutex<Vec<sniffer_core::types::Action>>>,
     pub api_map: ApiMap,
     pub broadcast_queue: BroadcastQueue,

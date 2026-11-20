@@ -3,11 +3,20 @@ use sniffer_core::ui::event::UiEvent;
 use sniffer_core::ui::style_map::StyleMap;
 use sniffer_core::ui::widget::WidgetId;
 
+/// Sentinel subscription that receives every widget-scoped event regardless of target.
+///
+/// Most plugins subscribe only to the widget IDs they render. Plugins that perform
+/// their own dynamic routing (for example JavaScript plugins whose `onEvent` entry
+/// point resolves IDs at runtime) subscribe to this sentinel instead.
+pub const WILDCARD_WIDGET_ID: WidgetId = WidgetId::MAX;
+
 /// Interface that external plugins must implement.
 ///
 /// When a plugin is registered, the system reads `subscriptions()` and
 /// inserts `ID -> [this_plugin]` entries into `PluginRegistry`'s internal `HashMap`.
-/// When an event arrives, only the listeners for that specific ID are invoked.
+/// When a widget-scoped event arrives, only the listeners for that specific ID
+/// (plus [`WILDCARD_WIDGET_ID`] subscribers) are invoked. Global events that are not
+/// scoped to a widget are delivered to every registered plugin.
 ///
 /// # Thread Safety
 /// `Send + Sync` is required; plugins are called from the render thread
@@ -15,7 +24,8 @@ use sniffer_core::ui::widget::WidgetId;
 pub trait UiPlugin: Send + Sync {
     /// The widget IDs this plugin wants to observe.
     ///
-    /// Returns a slice — no heap allocation, zero cost.
+    /// Returns a slice — no heap allocation, zero cost. Include
+    /// [`WILDCARD_WIDGET_ID`] to receive every widget-scoped event.
     fn subscriptions(&self) -> &[WidgetId];
 
     /// Called when a relevant `UiEvent` is received for a subscribed ID.

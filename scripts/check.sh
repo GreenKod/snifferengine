@@ -5,12 +5,12 @@
 set -euo pipefail
 
 echo -e "\n\033[1;36m========================================================\033[0m"
-echo -e "\033[1;36m 🚀 SnifferEngine Local CI Pre-flight Quality Check\033[0m"
+echo -e "\033[1;36m SnifferEngine Local CI Pre-flight Quality Check\033[0m"
 echo -e "\033[1;36m========================================================\033[0m\n"
 
 echo -e "\033[1;34m[1/7] Checking Engine Architecture Purity (no launcher leaks)...\033[0m"
 if grep -ri "app_drawer" crates/ framework/; then
-    echo -e "\033[1;31m❌ Found launcher-specific 'app_drawer' references inside engine crates or framework!\033[0m"
+    echo -e "\033[1;31m[FAIL] Found launcher-specific 'app_drawer' references inside engine crates or framework!\033[0m"
     exit 1
 fi
 
@@ -37,7 +37,7 @@ echo -e "\033[1;34m[7/7] Checking for Unused Dependencies (cargo machete)...\033
 if command -v cargo-machete &> /dev/null; then
     cargo machete
 else
-    echo -e "\033[0;33mℹ cargo-machete not found, skipping.\033[0m"
+    echo -e "\033[0;33m[INFO] cargo-machete not found, skipping.\033[0m"
 fi
 
-echo -e "\n\033[1;32m🎉 ALL SNIFFERENGINE QUALITY GATES PASSED! Ready to push safely. 🎉\033[0m\n"
+echo -e "\n\033[1;32mALL SNIFFERENGINE QUALITY GATES PASSED. Ready to push safely.\033[0m\n"

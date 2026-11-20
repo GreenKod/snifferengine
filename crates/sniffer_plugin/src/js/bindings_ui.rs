@@ -3,34 +3,132 @@ use crate::{dev_err, dev_log};
 use obfstr::obfstr;
 use rquickjs::{Ctx, Function, Object, Value};
 use sniffer_core::types::Element;
-use std::path::PathBuf;
-use std::sync::mpsc::SyncSender;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
-struct CacheWriteTask {
-    path: PathBuf,
-    bytes: Vec<u8>,
+/// Shared handle to a plugin's UI tree.
+type SharedUiTree = Arc<Mutex<Option<Arc<Element>>>>;
+
+/// Minimum quiet period before the cache writer persists a plugin tree.
+///
+/// Rapid `host_set_ui` bursts (e.g. animated state changes) collapse into a single
+/// write that snapshots the latest tree state, so neither `postcard` serialization
+/// nor a disk write runs on every update.
+const CACHE_WRITE_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// Upper bound for the idle wait when no cache write is pending.
+const CACHE_WRITER_IDLE_WAIT: Duration = Duration::from_secs(3600);
+
+enum CacheWriterMsg {
+    /// (Re)arms the debounce timer for a cache path and remembers where to read the
+    /// latest tree state from when the timer expires.
+    Schedule { path: PathBuf, tree: SharedUiTree },
+    /// Persists the pending state for a path immediately (plugin unload) and drops
+    /// it from the schedule so the tree handle can be released.
+    FlushNow { path: PathBuf },
 }
 
-static CACHE_WRITER_TX: OnceLock<SyncSender<CacheWriteTask>> = OnceLock::new();
+static CACHE_WRITER_TX: OnceLock<SyncSender<CacheWriterMsg>> = OnceLock::new();
 
-fn enqueue_cache_write(path: PathBuf, bytes: Vec<u8>) {
-    let tx = CACHE_WRITER_TX.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<CacheWriteTask>(32);
-        let _ = std::thread::Builder::new()
-            .name(obfstr!("sniffer-cache-writer").to_string())
-            .spawn(move || {
-                while let Ok(task) = rx.recv() {
-                    let _ = std::fs::write(task.path, task.bytes);
-                }
-            });
-        tx
+fn cache_writer() -> SyncSender<CacheWriterMsg> {
+    CACHE_WRITER_TX
+        .get_or_init(|| {
+            let (tx, rx) = sync_channel::<CacheWriterMsg>(64);
+            let _ = std::thread::Builder::new()
+                .name(obfstr!("sniffer-cache-writer").to_string())
+                .spawn(move || run_cache_writer(rx));
+            tx
+        })
+        .clone()
+}
+
+/// Defers the cache write for `path` until the UI has been stable for
+/// [`CACHE_WRITE_DEBOUNCE`]. The latest tree state is read at write time, so
+/// intermediate states are never serialized at all.
+fn schedule_cache_write(path: PathBuf, tree: SharedUiTree) {
+    // A dropped message is harmless: the pending entry from an earlier call still
+    // exists and snapshots the same (newer) tree when its own timer expires.
+    let _ = cache_writer().try_send(CacheWriterMsg::Schedule { path, tree });
+}
+
+/// Persists a plugin's pending cache write immediately.
+///
+/// Called on plugin unload so shutdown cannot lose the final UI state to the
+/// debounce timer.
+pub fn flush_cache_write_now(path: &Path) {
+    let _ = cache_writer().try_send(CacheWriterMsg::FlushNow {
+        path: path.to_path_buf(),
     });
-    let _ = tx.try_send(CacheWriteTask { path, bytes });
+}
+
+fn run_cache_writer(rx: Receiver<CacheWriterMsg>) {
+    // One pending entry per cache path, always tracking the newest tree handle and
+    // the latest deadline. Older snapshots are simply replaced.
+    let mut pending: HashMap<PathBuf, (SharedUiTree, Instant)> = HashMap::new();
+    loop {
+        let next_due = pending.values().map(|(_, due)| *due).min();
+        // A zero wait is valid: `recv_timeout` then times out immediately, which
+        // drives the processing of entries that are due right now.
+        let timeout = next_due.map_or(CACHE_WRITER_IDLE_WAIT, |due| {
+            due.saturating_duration_since(Instant::now())
+        });
+        match rx.recv_timeout(timeout) {
+            Ok(CacheWriterMsg::Schedule { path, tree }) => {
+                pending.insert(path, (tree, Instant::now() + CACHE_WRITE_DEBOUNCE));
+            }
+            Ok(CacheWriterMsg::FlushNow { path }) => {
+                if let Some((tree, _)) = pending.remove(&path) {
+                    write_tree_snapshot(&path, &tree);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                let now = Instant::now();
+                let due: Vec<PathBuf> = pending
+                    .iter()
+                    .filter(|(_, (_, due))| *due <= now)
+                    .map(|(path, _)| path.clone())
+                    .collect();
+                for path in due {
+                    if let Some((tree, _)) = pending.remove(&path) {
+                        write_tree_snapshot(&path, &tree);
+                    }
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                for (path, (tree, _)) in pending.drain() {
+                    write_tree_snapshot(&path, &tree);
+                }
+                break;
+            }
+        }
+    }
+}
+
+/// Serializes the current tree state and writes it to `path`.
+///
+/// The plugin lock is only held for a handle clone; the (potentially large)
+/// `postcard` serialization runs on the cache writer thread without blocking the
+/// UI thread.
+fn write_tree_snapshot(path: &Path, tree: &SharedUiTree) {
+    let snapshot = match tree.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => return,
+    };
+    let Some(element) = snapshot else {
+        return;
+    };
+    if let Ok(bytes) = postcard::to_allocvec(element.as_ref()) {
+        let _ = std::fs::write(path, bytes);
+    }
 }
 
 pub enum UiMutation {
-    SetUi(Element),
+    /// Replaces the whole tree. Shared instead of owned so the freshly parsed tree
+    /// does not have to be deep-cloned on the way into the mutation buffer.
+    SetUi(Arc<Element>),
     UpdateStyle {
         id: String,
         property: String,
@@ -42,7 +140,9 @@ pub enum UiMutation {
     },
     InsertChild {
         parent_id: String,
-        child: Element,
+        /// Boxed to keep the mutation buffer small; the child is moved into the tree
+        /// on flush, so the extra indirection costs one allocation and no copy.
+        child: Box<Element>,
     },
     RemoveNode {
         id: String,
@@ -55,7 +155,7 @@ pub struct MutationBuffer {
 }
 
 impl MutationBuffer {
-    pub fn flush(&self, ui_tree: &Arc<Mutex<Option<Element>>>) {
+    pub fn flush(&self, ui_tree: &Arc<Mutex<Option<Arc<Element>>>>) {
         let mut muts = match self.mutations.lock() {
             Ok(guard) => guard,
             Err(_) => return,
@@ -68,6 +168,7 @@ impl MutationBuffer {
             for m in muts.drain(..) {
                 match m {
                     UiMutation::SetUi(new_elem) => {
+                        // The shared tree is replaced as-is; no deep copy happens here.
                         *tree_lock = Some(new_elem);
                     }
                     UiMutation::UpdateStyle {
@@ -75,23 +176,23 @@ impl MutationBuffer {
                         property,
                         value,
                     } => {
-                        if let Some(ref mut root) = *tree_lock {
-                            root.mutate_style(&id, &property, &value);
+                        if let Some(root) = tree_lock.as_mut() {
+                            Arc::make_mut(root).mutate_style(&id, &property, &value);
                         }
                     }
                     UiMutation::SetText { id, text } => {
-                        if let Some(ref mut root) = *tree_lock {
-                            root.mutate_text(&id, &text);
+                        if let Some(root) = tree_lock.as_mut() {
+                            Arc::make_mut(root).mutate_text(&id, &text);
                         }
                     }
                     UiMutation::InsertChild { parent_id, child } => {
-                        if let Some(ref mut root) = *tree_lock {
-                            root.insert_child(&parent_id, child);
+                        if let Some(root) = tree_lock.as_mut() {
+                            Arc::make_mut(root).insert_child(&parent_id, *child);
                         }
                     }
                     UiMutation::RemoveNode { id } => {
-                        if let Some(ref mut root) = *tree_lock {
-                            root.remove_node(&id);
+                        if let Some(root) = tree_lock.as_mut() {
+                            Arc::make_mut(root).remove_node(&id);
                         }
                     }
                 }
@@ -106,7 +207,7 @@ impl MutationBuffer {
 pub fn register_ui_bindings<'js>(
     ctx: &Ctx<'js>,
     globals: &Object<'js>,
-    ui_tree: Arc<Mutex<Option<Element>>>,
+    ui_tree: Arc<Mutex<Option<Arc<Element>>>>,
     plugin_permissions: &[String],
     granted_permissions: Arc<Mutex<Vec<String>>>,
     cache_path: Option<std::path::PathBuf>,
@@ -118,14 +219,18 @@ pub fn register_ui_bindings<'js>(
     let tree_set_ui = ui_tree.clone();
     let cache_path_apply = cache_path;
     let apply_element = Arc::new(move |parsed: Element| {
+        // Build the shared tree once: the mutation buffer takes ownership of this
+        // handle, so no deep copy of the element tree is made on the way in.
+        let parsed = Arc::new(parsed);
         if let Ok(mut lock) = mut_set_ui.mutations.lock() {
-            lock.push(UiMutation::SetUi(parsed.clone()));
+            lock.push(UiMutation::SetUi(parsed));
         }
         mut_set_ui.flush(&tree_set_ui);
-        if let Some(path) = cache_path_apply.clone()
-            && let Ok(bytes) = postcard::to_allocvec(&parsed)
-        {
-            enqueue_cache_write(path, bytes);
+        if let Some(path) = cache_path_apply.clone() {
+            // Debounced persistence: no serialization and no disk write here. The
+            // cache writer snapshots the shared tree (which now contains this
+            // update) once the UI has been stable for the debounce period.
+            schedule_cache_write(path, Arc::clone(&tree_set_ui));
         }
     });
 
@@ -303,7 +408,7 @@ pub fn register_ui_bindings<'js>(
                 if let Ok(mut lock) = mut_insert_child.mutations.lock() {
                     lock.push(UiMutation::InsertChild {
                         parent_id,
-                        child: parsed_child,
+                        child: Box::new(parsed_child),
                     });
                 }
                 mut_insert_child.flush(&tree_insert_child);

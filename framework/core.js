@@ -182,4 +182,9 @@ if (typeof globalThis.onEvent !== "function") {
         SnifferUI.dispatchEvent(eventJsonString);
         return "[]";
     };
+    // Native host hint: this dispatcher already accepts structured event objects,
+    // so the host can use the zero-JSON fast event bridge. Plugins that install
+    // their own `onEvent` keep receiving JSON strings unless they declare
+    // `globalThis.__snifferEventFormat = "object"` themselves.
+    globalThis.__snifferDefaultOnEvent = globalThis.onEvent;
 }

@@ -10,7 +10,7 @@
 //! that explicitly subscribed to the target widget, guaranteeing O(1) event dispatching
 //! for non-interactive elements.
 
-use crate::r#trait::UiPlugin;
+use crate::r#trait::{UiPlugin, WILDCARD_WIDGET_ID};
 use sniffer_core::ui::data_map::DataMap;
 use sniffer_core::ui::event::EventBus;
 use sniffer_core::ui::style_map::StyleMap;
@@ -50,7 +50,8 @@ pub type BroadcastQueue = Arc<Mutex<Vec<(String, String)>>>;
 ///
 /// Registration complexity  : `O(subscriptions.len())` amortised
 /// Dispatch complexity      : `O(1)` `HashMap` lookup + `O(k)` dispatch
-///   where `k` = number of plugins subscribed to a given ID (typically 1–3)
+///   where `k` = number of plugins subscribed to a given ID (typically 1–3),
+///   plus [`WILDCARD_WIDGET_ID`] subscribers. Global events reach every plugin.
 ///
 /// # Example
 /// ```ignore
@@ -205,10 +206,32 @@ impl PluginRegistry {
             coalesced.push(event);
         }
 
-        // Route UI events to all plugins.
+        // Route UI events to subscribed listeners. Widget-scoped events use the
+        // subscription table for an O(1) lookup; global events reach every plugin.
         for event in coalesced {
-            for plugin in &self.plugins {
-                plugin.on_event(&event, styles, data, actions);
+            if let Some(widget_id) = event.widget_id() {
+                let direct = self.subscriptions.get(&widget_id);
+                if let Some(listeners) = direct {
+                    for plugin in listeners {
+                        plugin.on_event(&event, styles, data, actions);
+                    }
+                }
+                if let Some(wildcard_listeners) = self.subscriptions.get(&WILDCARD_WIDGET_ID) {
+                    for plugin in wildcard_listeners {
+                        let already_notified = direct.is_some_and(|listeners| {
+                            listeners
+                                .iter()
+                                .any(|listener| Arc::ptr_eq(listener, plugin))
+                        });
+                        if !already_notified {
+                            plugin.on_event(&event, styles, data, actions);
+                        }
+                    }
+                }
+            } else {
+                for plugin in &self.plugins {
+                    plugin.on_event(&event, styles, data, actions);
+                }
             }
         }
 

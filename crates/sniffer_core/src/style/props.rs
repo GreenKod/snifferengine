@@ -71,6 +71,14 @@ fn deserialize_f32_or_dimension<'de, D>(deserializer: D) -> Result<f32, D::Error
 where
     D: serde::Deserializer<'de>,
 {
+    // Binary formats (e.g. the postcard UI cache) store these fields as plain
+    // floats, exactly matching the derived `Serialize` output. The flexible
+    // string/dimension forms below rely on untagged probing, which binary
+    // deserializers cannot serve.
+    if !deserializer.is_human_readable() {
+        return f32::deserialize(deserializer);
+    }
+
     #[derive(serde::Deserialize)]
     #[serde(untagged)]
     enum F32OrDimension {
