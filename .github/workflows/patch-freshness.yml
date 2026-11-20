@@ -39,11 +39,11 @@ jobs:
 
       - name: Audit Patched Crates (Freshness, Yank, Integrity, Upstream Activity)
         run: |
-          ARGS="--verify-integrity --track-upstream"
+          ARGS=(--verify-integrity --track-upstream)
           if [ "${{ github.event_name }}" != "push" ]; then
-            ARGS="$ARGS --strict"
+            ARGS+=(--strict)
           fi
-          python3 .github/scripts/check_patched_crates.py $ARGS
+          python3 .github/scripts/check_patched_crates.py "${ARGS[@]}"
 
       # ------------------------------------------------------------------
       # Issue tracking (scheduled/manual runs only): one labeled issue stays
