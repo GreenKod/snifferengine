@@ -58,8 +58,8 @@ pub(crate) fn context<'local>(env: &Env<'local>) -> JObject<'local> {
 #[must_use]
 pub fn get_files_dir() -> Option<std::path::PathBuf> {
     let vm = vm();
-    let path = vm.attach_current_thread_for_scope::<_, _, JniError>(
-        |env| -> Result<String, JniError> {
+    let path =
+        vm.attach_current_thread_for_scope::<_, _, JniError>(|env| -> Result<String, JniError> {
             let ctx = context(env);
             if ctx.is_null() {
                 return Err(JniError::NullPtr("context"));
@@ -88,8 +88,7 @@ pub fn get_files_dir() -> Option<std::path::PathBuf> {
             }
             let path_jstring = env.as_cast::<jni::objects::JString>(&path_obj)?;
             path_jstring.try_to_string(env)
-        },
-    );
+        });
     path.ok().map(std::path::PathBuf::from)
 }
 
