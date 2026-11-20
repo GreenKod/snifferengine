@@ -109,6 +109,15 @@ impl AppState {
         let mut plugin_registry = PluginRegistry::default();
         let action_queue = Arc::new(Mutex::new(Vec::new()));
 
+        // Persist plugin-scoped vault data (onboarding state, preferences, ...)
+        // in the app's private storage so it survives restarts. Without a cache
+        // dir the vault stays in memory and every launch starts from scratch.
+        if let Some(files_dir) = crate::jni::bridge::get_files_dir() {
+            let vault_dir = files_dir.join("vault");
+            let _ = std::fs::create_dir_all(&vault_dir);
+            plugin_registry.vault().set_cache_dir(vault_dir);
+        }
+
         let _ = plugin_registry.vault().set_json(
             "system.theme",
             &sniffer_core::vault::SystemTheme::default(),
