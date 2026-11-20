@@ -4,6 +4,19 @@ use super::layout::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Declarative hit-testing mode, mirroring the CSS `pointer-events` standard.
+///
+/// `Auto` makes the element a pointer hit-test target; `None` lets pointer
+/// input pass through the element itself while its children remain eligible
+/// targets (exactly like `pointer-events: none` in CSS).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PointerEvents {
+    #[default]
+    Auto,
+    None,
+}
+
 /// The easing curve used for interpolating animation values.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -175,6 +188,7 @@ pub struct Style {
     pub transition: Transition,
     pub transform: Transform,
     pub enter_from: Option<EnterFrom>,
+    pub pointer_events: PointerEvents,
 }
 
 /// Initial property values applied when an element mounts into the UI tree with an enter transition.
@@ -236,6 +250,7 @@ impl Default for Style {
             transition: Transition::default(),
             transform: Transform::default(),
             enter_from: None,
+            pointer_events: PointerEvents::Auto,
         }
     }
 }

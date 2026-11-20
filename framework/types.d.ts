@@ -57,6 +57,11 @@ interface Style {
     shadowSpread?: number;
     shadowBlur?: number;
     borderGradient?: [number, number];
+
+    /** Declarative hit-testing mode (CSS pointer-events). "auto" (default) makes the
+     *  element a tap/click target; "none" lets input pass through it while children
+     *  stay eligible. Key uses the engine's snake_case wire format. */
+    pointer_events?: "auto" | "none";
 }
 
 type UIElement =

@@ -1,6 +1,6 @@
 use sniffer_core::layout::LayoutNode;
 use sniffer_core::math::{Point, Rect};
-use sniffer_core::style::Style;
+use sniffer_core::style::{PointerEvents, Style};
 use sniffer_core::types::Element;
 use sniffer_render::draw::culling::find_clicked_button;
 
@@ -18,9 +18,13 @@ fn test_find_clicked_button() {
         children: vec![],
     };
 
+    // Root declares itself a non-target with `pointer_events: none`.
     let root = Element::Container {
         id: Some("root".to_string()),
-        style: Style::default(),
+        style: Style {
+            pointer_events: PointerEvents::None,
+            ..Style::default()
+        },
         children: vec![btn],
     };
     let root_node = LayoutNode {
@@ -38,14 +42,112 @@ fn test_find_clicked_button() {
     assert_eq!(rect.x, 50.0);
     assert_eq!(rect.y, 100.0);
 
-    // Hit outside button on empty space of root container -> must return None (not root!)
+    // Hit outside button on empty space of root container -> must return None
+    // because the root declared `pointer_events: none`.
     let hit_outside = find_clicked_button(&root, &root_node, Point::new(10.0, 10.0));
     assert_eq!(hit_outside, None);
 }
 
 #[test]
-fn test_invisible_layer_and_structural_wrapper_hitbox() {
-    // A button inside sheet_grid_wrapper inside modal_sheet_root
+fn test_default_pointer_events_container_is_hit_regardless_of_name() {
+    // The old engine guessed clickability from ID suffixes like `_wrapper`.
+    // Under the declarative model any default-style container is a target.
+    let wrapper = Element::Container {
+        id: Some("sheet_grid_wrapper".to_string()),
+        style: Style::default(),
+        children: vec![],
+    };
+    let wrapper_node = LayoutNode {
+        node_id: 1,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"sheet_grid_wrapper")),
+        rect: Rect::new(0.0, 40.0, 400.0, 800.0),
+        children: vec![],
+    };
+
+    let root = Element::Container {
+        id: Some("modal_sheet_root".to_string()),
+        style: Style {
+            pointer_events: PointerEvents::None,
+            ..Style::default()
+        },
+        children: vec![wrapper],
+    };
+    let root_node = LayoutNode {
+        node_id: 0,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"modal_sheet_root")),
+        rect: Rect::new(0.0, 0.0, 400.0, 900.0),
+        children: vec![wrapper_node],
+    };
+
+    // Touching empty space of the default-style wrapper hits the wrapper.
+    let hit = find_clicked_button(&root, &root_node, Point::new(300.0, 500.0));
+    assert_eq!(
+        hit.map(|(id, _)| id),
+        Some(sniffer_core::ui::widget::fnv1a(b"sheet_grid_wrapper"))
+    );
+}
+
+#[test]
+fn test_pointer_events_none_children_still_hit() {
+    // CSS semantics: `pointer_events: none` only removes the element itself
+    // from hit-testing; its children remain eligible targets.
+    let card = Element::Container {
+        id: Some("sheet_card_0".to_string()),
+        style: Style::default(),
+        children: vec![],
+    };
+    let card_node = LayoutNode {
+        node_id: 2,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"sheet_card_0")),
+        rect: Rect::new(20.0, 50.0, 100.0, 100.0),
+        children: vec![],
+    };
+
+    let passthrough_wrapper = Element::Container {
+        id: Some("sheet_grid_wrapper".to_string()),
+        style: Style {
+            pointer_events: PointerEvents::None,
+            ..Style::default()
+        },
+        children: vec![card],
+    };
+    let wrapper_node = LayoutNode {
+        node_id: 1,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"sheet_grid_wrapper")),
+        rect: Rect::new(0.0, 40.0, 400.0, 800.0),
+        children: vec![card_node],
+    };
+
+    let root = Element::Container {
+        id: Some("modal_sheet_root".to_string()),
+        style: Style {
+            pointer_events: PointerEvents::None,
+            ..Style::default()
+        },
+        children: vec![passthrough_wrapper],
+    };
+    let root_node = LayoutNode {
+        node_id: 0,
+        widget_id: Some(sniffer_core::ui::widget::fnv1a(b"modal_sheet_root")),
+        rect: Rect::new(0.0, 0.0, 400.0, 900.0),
+        children: vec![wrapper_node],
+    };
+
+    // Touching the card through the passthrough wrapper hits the card.
+    let hit_card = find_clicked_button(&root, &root_node, Point::new(50.0, 80.0));
+    assert_eq!(
+        hit_card.map(|(id, _)| id),
+        Some(sniffer_core::ui::widget::fnv1a(b"sheet_card_0"))
+    );
+
+    // Touching empty space of the wrapper passes through everything -> None.
+    let hit_empty = find_clicked_button(&root, &root_node, Point::new(300.0, 500.0));
+    assert_eq!(hit_empty, None);
+}
+
+#[test]
+fn test_invisible_layer_and_passthrough_wrapper_hitbox() {
+    // A button inside a `pointer_events: none` wrapper inside a hidden root
     let sheet_card = Element::Container {
         id: Some("sheet_card_0".to_string()),
         style: Style::default(),
@@ -58,9 +160,13 @@ fn test_invisible_layer_and_structural_wrapper_hitbox() {
         children: vec![],
     };
 
+    let passthrough_style = Style {
+        pointer_events: PointerEvents::None,
+        ..Style::default()
+    };
     let grid_wrapper = Element::Container {
         id: Some("sheet_grid_wrapper".to_string()),
-        style: Style::default(),
+        style: passthrough_style,
         children: vec![sheet_card],
     };
     let grid_node = LayoutNode {
@@ -103,10 +209,15 @@ fn test_invisible_layer_and_structural_wrapper_hitbox() {
     );
     assert_eq!(hit_hidden_empty, None);
 
-    // Case 2: Modal sheet is visible (opacity: 1.0)
+    // Case 2: Modal sheet is visible (opacity: 1.0), wrapper still passthrough.
+    // The root declares itself a non-target so empty-space taps fall through.
+    let visible_root_style = Style {
+        pointer_events: PointerEvents::None,
+        ..Style::default()
+    };
     let visible_sheet_root = Element::Container {
         id: Some("modal_sheet_root".to_string()),
-        style: Style::default(),
+        style: visible_root_style,
         children: vec![grid_wrapper],
     };
     let visible_root_node = LayoutNode {
@@ -128,7 +239,8 @@ fn test_invisible_layer_and_structural_wrapper_hitbox() {
         sniffer_core::ui::widget::fnv1a(b"sheet_card_0")
     );
 
-    // Touching empty space of sheet_grid_wrapper -> MUST return None (not sheet_grid_wrapper)!
+    // Touching empty space of the passthrough wrapper -> MUST return None
+    // (not sheet_grid_wrapper and not modal_sheet_root)!
     let hit_visible_empty = find_clicked_button(
         &visible_sheet_root,
         &visible_root_node,
@@ -161,7 +273,10 @@ fn test_transformed_button_hitbox() {
 
     let root = Element::Container {
         id: Some("root".to_string()),
-        style: Style::default(),
+        style: Style {
+            pointer_events: PointerEvents::None,
+            ..Style::default()
+        },
         children: vec![btn],
     };
     let root_node = LayoutNode {

@@ -232,6 +232,13 @@ impl Element {
                         style.shadow_color = Some(color);
                     }
                 }
+                "pointer_events" | "pointer-events" => {
+                    match value.trim().to_ascii_lowercase().as_str() {
+                        "auto" => style.pointer_events = crate::style::PointerEvents::Auto,
+                        "none" => style.pointer_events = crate::style::PointerEvents::None,
+                        _ => {}
+                    }
+                }
                 _ => return false,
             }
             return true;

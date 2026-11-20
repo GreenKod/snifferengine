@@ -700,7 +700,7 @@ fn draw_touch_hitboxes(
     let elem_id = element.id();
     let is_button = match elem_id {
         Some(k) => {
-            !crate::ui::widget::is_structural_layout_id(k)
+            element.style().pointer_events != crate::style::PointerEvents::None
                 && (k.starts_with("app_item_")
                     || k.starts_with("dock_app_btn_")
                     || k.starts_with("dock_app_circle_")
