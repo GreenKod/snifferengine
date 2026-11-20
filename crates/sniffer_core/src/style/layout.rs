@@ -82,6 +82,26 @@ impl<'de> Deserialize<'de> for Dimension {
     where
         D: serde::Deserializer<'de>,
     {
+        /// Mirrors the derived `Serialize` shape so binary formats (e.g. the postcard
+        /// UI cache) round-trip `Dimension` as a plain externally tagged enum.
+        ///
+        /// The untagged JSON probing below needs `deserialize_any`, which binary
+        /// deserializers do not support.
+        #[derive(Deserialize)]
+        enum BinaryDimension {
+            Auto,
+            Pixels(f32),
+            Percent(f32),
+        }
+
+        if !deserializer.is_human_readable() {
+            return match BinaryDimension::deserialize(deserializer)? {
+                BinaryDimension::Auto => Ok(Self::Auto),
+                BinaryDimension::Pixels(px) => Ok(Self::Pixels(px)),
+                BinaryDimension::Percent(pct) => Ok(Self::Percent(pct)),
+            };
+        }
+
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum RawDimension {

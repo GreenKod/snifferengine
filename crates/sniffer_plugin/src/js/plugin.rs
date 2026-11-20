@@ -387,6 +387,11 @@ impl JsPlugin {
                     }
                     PluginMsg::Unload => {
                         crate::logger::flush();
+                        // Persist any debounced cache write right away so shutdown
+                        // cannot lose the final UI state to the debounce timer.
+                        if let Some(ref path) = cache_path {
+                            crate::js::bindings_ui::flush_cache_write_now(path);
+                        }
                         runtime.run_gc();
                         break;
                     }
