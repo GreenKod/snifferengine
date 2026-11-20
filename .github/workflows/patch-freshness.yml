@@ -1,0 +1,93 @@
+name: SnifferEngine Patched Crate Upstream Tracker
+
+# Audits locally patched crates (patches/) against their upstream:
+# release freshness, yanked-release detection, vendored-tree integrity
+# (pristine + recorded patch), and unreleased upstream activity.
+#
+# The scheduled strict run fails when a patched crate drifts, and the
+# tracker keeps a labeled GitHub issue open until the drift is resolved,
+# so an upstream update is never missed. Push-triggered runs stay
+# non-fatal and only annotate with warnings.
+
+on:
+  schedule:
+    # Monday 06:17 UTC (offset minute to avoid the top-of-hour API load spike)
+    - cron: "17 6 * * 1"
+  push:
+    branches: ["master"]
+    paths:
+      - "patches/**"
+      - "Cargo.toml"
+      - ".github/scripts/check_patched_crates.py"
+      - ".github/workflows/patch-freshness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  TRACKER_LABEL: patch-freshness
+
+jobs:
+  patched-crate-audit:
+    name: Patched Crate Audit (crates.io + upstream)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Audit Patched Crates (Freshness, Yank, Integrity, Upstream Activity)
+        run: |
+          ARGS=(--verify-integrity --track-upstream)
+          if [ "${{ github.event_name }}" != "push" ]; then
+            ARGS+=(--strict)
+          fi
+          python3 .github/scripts/check_patched_crates.py "${ARGS[@]}"
+
+      # ------------------------------------------------------------------
+      # Issue tracking (scheduled/manual runs only): one labeled issue stays
+      # open while any patched crate needs upstream attention.
+      # ------------------------------------------------------------------
+      - name: Open or Update Tracking Issue
+        if: failure() && github.event_name != 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Ensure the tracker label exists (idempotent).
+          gh api --method POST "repos/${{ github.repository }}/labels" \
+            -f name="$TRACKER_LABEL" \
+            -f color="BFD4F2" \
+            -f description="Patched crates need upstream attention" \
+            --silent > /dev/null 2>&1 || true
+
+          printf '%s\n' \
+            "The patched-crate tracker found drift: a vendored crate is behind upstream, uses a yanked release, or no longer matches its recorded patch." \
+            "" \
+            "- Audit output: see the failing run below" \
+            "- Update procedure: patches/README.md" \
+            "- Run: ${RUN_URL}" > /tmp/tracker-issue-body.md
+
+          OPEN_ISSUES=$(gh issue list --label "$TRACKER_LABEL" --state open --json number --jq '.[].number')
+          if [ -z "$OPEN_ISSUES" ]; then
+            gh issue create \
+              --title "Patched crates need upstream attention" \
+              --body-file /tmp/tracker-issue-body.md \
+              --label "$TRACKER_LABEL"
+          else
+            for issue in $OPEN_ISSUES; do
+              gh issue comment "$issue" --body "Tracker is still failing: ${RUN_URL}"
+            done
+          fi
+
+      - name: Close Resolved Tracking Issue
+        if: success() && github.event_name != 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          OPEN_ISSUES=$(gh issue list --label "$TRACKER_LABEL" --state open --json number --jq '.[].number')
+          for issue in $OPEN_ISSUES; do
+            gh issue close "$issue" --comment "Tracker is green again: ${RUN_URL}"
+          done

@@ -1,0 +1,154 @@
+diff -ru '--exclude=android-games-sdk' '--exclude=.cargo-ok' '--exclude=.cargo_vcs_info.json' android-activity/src/init.rs ../p2/android-activity/src/init.rs
+--- a/src/init.rs	2026-11-20 21:55:05.759706137 +0300
++++ b/src/init.rs	2026-11-20 21:55:05.762397284 +0300
+@@ -1,6 +1,5 @@
+ use jni::{
+-    jni_sig, jni_str,
+-    objects::{JObject, JString, JThread},
++    objects::JObject,
+     vm::JavaVM,
+ };
+ use log::Level;
+@@ -220,43 +219,84 @@
+     env: &mut jni::Env<'local>,
+     activity: &JObject<'any>,
+ ) -> jni::errors::Result<JObject<'local>> {
+-    let app = env
+-        .call_method(
+-            activity,
+-            jni_str!("getApplication"),
+-            jni_sig!(() -> android.app.Application),
+-            &[],
+-        )?
+-        .l()?;
+-    Ok(app)
++    let raw = env.get_raw();
++    let iface = unsafe { *raw };
++    let class = unsafe { ((*iface).v1_1.GetObjectClass)(raw, activity.as_raw()) };
++    let method_name = c"getApplication".as_ptr();
++    let method_sig = c"()Landroid/app/Application;".as_ptr();
++    let method_id = unsafe { ((*iface).v1_1.GetMethodID)(raw, class, method_name, method_sig) };
++    if method_id.is_null() {
++        if env.exception_check() {
++            env.exception_clear();
++        }
++        return Ok(unsafe { JObject::from_raw(env, activity.as_raw()) });
++    }
++    let app = unsafe { ((*iface).v1_1.CallObjectMethod)(raw, activity.as_raw(), method_id) };
++    if env.exception_check() {
++        env.exception_clear();
++    }
++    if app.is_null() {
++        return Ok(unsafe { JObject::from_raw(env, activity.as_raw()) });
++    }
++    Ok(unsafe { JObject::from_raw(env, app) })
+ }
+ 
+ fn get_assets<'local, 'any>(
+     env: &mut jni::Env<'local>,
+-    application: &JObject<'any>,
++    context: &JObject<'any>,
+ ) -> jni::errors::Result<JObject<'local>> {
+-    let assets_manager = env
+-        .call_method(
+-            application,
+-            jni_str!("getAssets"),
+-            jni_sig!(() -> android.content.res.AssetManager),
+-            &[],
+-        )?
+-        .l()?;
+-    Ok(assets_manager)
++    let raw = env.get_raw();
++    let iface = unsafe { *raw };
++    let class = unsafe { ((*iface).v1_1.GetObjectClass)(raw, context.as_raw()) };
++    let method_name = c"getAssets".as_ptr();
++    let method_sig = c"()Landroid/content/res/AssetManager;".as_ptr();
++    let method_id = unsafe { ((*iface).v1_1.GetMethodID)(raw, class, method_name, method_sig) };
++    if method_id.is_null() {
++        if env.exception_check() {
++            env.exception_clear();
++        }
++        return Err(jni::errors::Error::NullPtr("getAssets method ID not found"));
++    }
++    let assets = unsafe { ((*iface).v1_1.CallObjectMethod)(raw, context.as_raw(), method_id) };
++    if env.exception_check() {
++        env.exception_clear();
++    }
++    if assets.is_null() {
++        return Err(jni::errors::Error::NullPtr("getAssets returned null"));
++    }
++    Ok(unsafe { JObject::from_raw(env, assets) })
+ }
+ 
+ fn try_init_current_thread(env: &mut jni::Env, activity: &JObject) -> jni::errors::Result<()> {
+-    let activity_class = env.get_object_class(activity)?;
+-    let class_loader = activity_class.get_class_loader(env)?;
+-
+-    let thread = JThread::current_thread(env)?;
+-    thread.set_context_class_loader(env, &class_loader)?;
+-    let thread_name = JString::from_jni_str(env, jni_str!("android_main"))?;
+-    thread.set_name(env, &thread_name)?;
++    let raw = env.get_raw();
++    let iface = unsafe { *raw };
++    let class = unsafe { ((*iface).v1_1.GetObjectClass)(raw, activity.as_raw()) };
++    let method_name = c"getClassLoader".as_ptr();
++    let method_sig = c"()Ljava/lang/ClassLoader;".as_ptr();
++    let method_id = unsafe { ((*iface).v1_1.GetMethodID)(raw, class, method_name, method_sig) };
++    if !method_id.is_null() {
++        let class_loader = unsafe { ((*iface).v1_1.CallObjectMethod)(raw, activity.as_raw(), method_id) };
++        if !class_loader.is_null() {
++            let thread_class = unsafe { ((*iface).v1_1.FindClass)(raw, c"java/lang/Thread".as_ptr()) };
++            if !thread_class.is_null() {
++                let current_thread_mid = unsafe { ((*iface).v1_1.GetStaticMethodID)(raw, thread_class, c"currentThread".as_ptr(), c"()Ljava/lang/Thread;".as_ptr()) };
++                if !current_thread_mid.is_null() {
++                    let thread = unsafe { ((*iface).v1_1.CallStaticObjectMethod)(raw, thread_class, current_thread_mid) };
++                    if !thread.is_null() {
++                        let set_ccl_mid = unsafe { ((*iface).v1_1.GetMethodID)(raw, thread_class, c"setContextClassLoader".as_ptr(), c"(Ljava/lang/ClassLoader;)V".as_ptr()) };
++                        if !set_ccl_mid.is_null() {
++                            unsafe { ((*iface).v1_1.CallVoidMethod)(raw, thread, set_ccl_mid, class_loader) };
++                        }
++                    }
++                }
++            }
++        }
++    }
++    if env.exception_check() {
++        env.exception_clear();
++    }
+ 
+-    // Also name native thread - this needs to happen here after attaching to a JVM thread,
+-    // since that changes the thread name to something like "Thread-2".
++    // Also name native thread
+     unsafe {
+         let thread_name = c"android_main";
+         let _ = libc::pthread_setname_np(libc::pthread_self(), thread_name.as_ptr());
+diff -ru '--exclude=android-games-sdk' '--exclude=.cargo-ok' '--exclude=.cargo_vcs_info.json' android-activity/src/native_activity/mod.rs ../p2/android-activity/src/native_activity/mod.rs
+--- a/src/native_activity/mod.rs	2026-11-20 21:55:05.759855891 +0300
++++ b/src/native_activity/mod.rs	2026-11-20 21:55:05.762707534 +0300
+@@ -358,6 +358,7 @@
+                 add_flags.bits(),
+                 remove_flags.bits(),
+             );
++            ndk_sys::ANativeActivity_setWindowFormat(na_mut.cast(), 1); // WINDOW_FORMAT_RGBA_8888
+         }
+     }
+ 
+diff -ru '--exclude=android-games-sdk' '--exclude=.cargo-ok' '--exclude=.cargo_vcs_info.json' android-activity/src/sdk.rs ../p2/android-activity/src/sdk.rs
+--- a/src/sdk.rs	2026-11-20 21:55:05.759872088 +0300
++++ b/src/sdk.rs	2026-11-20 21:55:05.762729959 +0300
+@@ -54,14 +54,6 @@
+ 
+ // Explicitly initialize the JNI bindings so we can get and early, upfront,
+ // error if something is wrong.
+-pub(crate) fn jni_init(env: &jni::Env) -> jni::errors::Result<()> {
+-    let _ = IBinderAPI::get(env, &Default::default())?;
+-    let _ = ViewAPI::get(env, &Default::default())?;
+-    let _ = InputMethodManagerAPI::get(env, &Default::default())?;
+-    let _ = ContextAPI::get(env, &Default::default())?;
+-    let _ = WindowAPI::get(env, &Default::default())?;
+-    let _ = ActivityAPI::get(env, &Default::default())?;
+-    let _ = crate::input::AKeyCharacterMapAPI::get(env, &Default::default())?;
+-    let _ = crate::input::AInputDeviceAPI::get(env, &Default::default())?;
++pub(crate) fn jni_init(_env: &jni::Env) -> jni::errors::Result<()> {
+     Ok(())
+ }
