@@ -87,3 +87,47 @@ jobs:
           echo "ref     : ${{ github.ref }}"
           echo "schedule: 23 6 * * 3 (weekly, Wednesday 06:23 UTC)"
           echo "purpose : continuously prove the pinned nix environment"
+
+  # ------------------------------------------------------------------
+  # Stage 3.2 — Nix on the runner: SHA-pinned install, a download-cache
+  # strategy keyed by the pin layer, and the first real nix-level
+  # evaluation of nix/pins.nix (syntax, parse, and attr coherence).
+  # ------------------------------------------------------------------
+  nix-bootstrap:
+    name: Nix Install & Pin-Layer Evaluation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - name: Restore Nix Download Cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/nix
+          # New pins invalidate the key automatically.
+          key: nix-downloads-v1-${{ hashFiles('nix/pins.nix') }}
+          restore-keys: nix-downloads-v1-
+
+      - name: Report Nix Version
+        run: nix --version
+
+      - name: Evaluate the Pin Layer
+        run: |
+          # The pin layer is a pure attribute set: evaluating it costs no
+          # download and proves nix syntax, parse, and file/eval coherence.
+          for pin in nixpkgs rust-overlay; do
+            eval_rev=$(nix-instantiate --eval nix/pins.nix -A "$pin.rev" | tr -d '"')
+            file_rev=$(sed -n "/# pin:$pin-rev$/{n;s/.*rev = \"\([0-9a-f]*\)\";/\1/p;}" nix/pins.nix)
+            if [ -z "$file_rev" ]; then
+              echo "::error file=nix/pins.nix::anchor parse failed for $pin"
+              exit 1
+            fi
+            if [ "$eval_rev" != "$file_rev" ]; then
+              echo "::error file=nix/pins.nix::$pin rev mismatch: eval=$eval_rev file=$file_rev"
+              exit 1
+            fi
+            echo "$pin rev evaluates to ${eval_rev:0:12}… (file and eval agree)"
+          done
