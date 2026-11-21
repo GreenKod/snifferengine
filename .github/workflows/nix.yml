@@ -23,6 +23,7 @@ on:
     paths:
       - "nix/**"
       - "shell.nix"
+      - "shell-android.nix"
       - "rust-toolchain.toml"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -34,6 +35,7 @@ on:
     paths:
       - "nix/**"
       - "shell.nix"
+      - "shell-android.nix"
       - "rust-toolchain.toml"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -175,4 +177,46 @@ jobs:
             node --check framework/sniffer_ui.js
             echo "::endgroup::"
             echo "validate-shell: pinned environment smoke PASSED"
+          '
+
+  # ------------------------------------------------------------------
+  # Stage 3.5 — Android cross-compilation parity inside the pure
+  # pinned android shell (shell-android.nix): the SDK/NDK composition
+  # is pinned to the CI validate-android set (nix/android.nix), and
+  # cargo-ndk proves the same targets the runner-side job proves.
+  # ------------------------------------------------------------------
+  validate-android:
+    name: Validate Android (NDK cross-compile, pure shell)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - name: Restore Nix Download Cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/nix
+          key: nix-downloads-v1-${{ hashFiles('nix/pins.nix') }}
+          restore-keys: nix-downloads-v1-
+
+      # The android-mode hook exports ANDROID_HOME/NDK_ROOT and the CI's
+      # BINDGEN_EXTRA_CLANG_ARGS per target, then fails fast if the NDK
+      # layout is missing.
+      - name: Cross-Compile Inside the Pure Pinned Android Shell
+        run: |
+          nix-shell shell-android.nix --pure --run '
+            set -euo pipefail
+            echo "::group::Android environment (asserted by the shell hook)"
+            echo "NDK: ${ANDROID_NDK_ROOT}"
+            echo "::endgroup::"
+            echo "::group::Android (ARM64) Check & Clippy"
+            cargo ndk --target aarch64-linux-android clippy --locked --workspace --all-targets -- -D warnings
+            echo "::endgroup::"
+            echo "::group::Android (Emulator x86_64) Check & Clippy"
+            cargo ndk --target x86_64-linux-android clippy --locked --workspace --all-targets -- -D warnings
+            echo "::endgroup::"
+            echo "validate-android: pinned NDK cross-compile smoke PASSED"
           '
