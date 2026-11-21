@@ -136,9 +136,54 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 WORKDIR /workspace
 
 # ------------------------------------------------------------------------------
+# android — pinned SDK + NDK composition (vault plan 0002 — stages 2.1/2.2)
+# ------------------------------------------------------------------------------
+FROM toolchain AS android
+
+# Java is consumed ONLY by sdkmanager while building this layer. Debian
+# trixie no longer ships openjdk-17, so Java 21 from apt serves the builder;
+# the consolidated CI installs temurin 17 for the same purpose, and no
+# engine artifact depends on Java (cargo ndk links through the NDK's clang).
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends openjdk-21-jdk-headless unzip
+
+ENV ANDROID_HOME=/opt/android-sdk
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+ENV PATH=${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:$PATH
+
+# cmdline-tools 13.0 from the static Google archive, sha256 verified at build
+# time (CI parity: setup-android provides the same tool to check.yml).
+ARG CMDLINE_TOOLS_SHA256=7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee
+
+RUN curl -fsSL \
+      "https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip" \
+      -o /tmp/cmdline-tools.zip && \
+    echo "${CMDLINE_TOOLS_SHA256}  /tmp/cmdline-tools.zip" | sha256sum -c - && \
+    mkdir -p "${ANDROID_HOME}/cmdline-tools" && \
+    unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract && \
+    mv /tmp/cmdline-tools-extract/cmdline-tools "${ANDROID_HOME}/cmdline-tools/latest" && \
+    rm -rf /tmp/cmdline-tools.zip /tmp/cmdline-tools-extract && \
+    yes | sdkmanager --licenses > /dev/null && \
+    sdkmanager "platform-tools" "ndk;26.1.10909125" "build-tools;34.0.0" "platforms;android-34"
+
+# The NDK/SDK versions are single-sourced against check.yml:
+# docker/android-parity.sh fails CI loudly on drift.
+ENV ANDROID_NDK_ROOT=${ANDROID_HOME}/ndk/26.1.10909125
+ENV PATH=${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
+
+# CI-parity bindgen targets (check.yml validate-android values): the aarch64
+# triple pins API 30, the others use the NDK default API level.
+ENV BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=aarch64-linux-android30"
+ENV BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi="--target=armv7-linux-androideabi"
+ENV BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android="--target=x86_64-linux-android"
+ENV BINDGEN_EXTRA_CLANG_ARGS_i686_linux_android="--target=i686-linux-android"
+
+# ------------------------------------------------------------------------------
 # dev — the interactive development environment
 # ------------------------------------------------------------------------------
-FROM toolchain AS dev
+FROM android AS dev
 
 WORKDIR /workspace
 
