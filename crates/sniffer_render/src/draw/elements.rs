@@ -8,22 +8,6 @@ use sniffer_core::{Rect, ScreenMetrics};
 
 const DEFAULT_TEXT_COLOR: u32 = 0xFF00_0000;
 
-static ICON_LOADER: std::sync::atomic::AtomicPtr<()> =
-    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
-pub type IconLoaderFn = fn(&str);
-
-pub fn set_icon_loader(f: IconLoaderFn) {
-    ICON_LOADER.store(f as *mut (), std::sync::atomic::Ordering::Relaxed);
-}
-
-pub fn request_async_icon(pkg_name: &str) {
-    let ptr = ICON_LOADER.load(std::sync::atomic::Ordering::Relaxed);
-    if !ptr.is_null() {
-        let f: IconLoaderFn = unsafe { std::mem::transmute(ptr) };
-        f(pkg_name);
-    }
-}
-
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) fn draw_element_contents(
     renderer: &mut dyn Renderer,
@@ -196,9 +180,10 @@ pub(crate) fn draw_element_contents(
             };
 
             if !renderer.has_image(img_id) {
-                if let Some(pkg_name) = src.strip_prefix("app-icon://") {
-                    request_async_icon(pkg_name);
-                }
+                // Custom-scheme images are delegated to whichever handler the
+                // embedding host registered for that scheme; the engine
+                // itself stays scheme-blind.
+                super::image_schemes::request_scheme_image(src);
                 return 0;
             }
 

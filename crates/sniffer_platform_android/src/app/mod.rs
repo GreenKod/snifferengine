@@ -18,12 +18,27 @@ use sniffer_core::ScreenMetrics;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+/// Host-side handler for the launcher's `app-icon://` image scheme. The
+/// engine stays scheme-blind: it only delegates unresolved image sources to
+/// whichever handlers the host registered.
+struct AppIconSchemeHandler;
+
+impl sniffer_render::draw::image_schemes::ImageProtocolHandler for AppIconSchemeHandler {
+    fn scheme(&self) -> &'static str {
+        "app-icon"
+    }
+
+    fn request(&self, resource: &str) {
+        crate::jni::bridge::request_async_app_icon(resource);
+    }
+}
+
 #[allow(clippy::pedantic, clippy::too_many_lines)]
 pub fn android_main(app: AndroidApp) {
     unsafe {
         std::env::set_var("RUST_BACKTRACE", "full");
     }
-    sniffer_render::draw::elements::set_icon_loader(crate::jni::bridge::request_async_app_icon);
+    sniffer_render::draw::image_schemes::register_image_scheme(Arc::new(AppIconSchemeHandler));
     sniffer_plugin::js::host_bridge::set_host_bridge(Box::new(AndroidHostBridge));
 
     crate::jni::bridge::init_app_list_cache();
