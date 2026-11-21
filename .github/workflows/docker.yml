@@ -13,9 +13,11 @@
 #     labeled tracking issue that stays open until a green run closes it
 #     (wired in stages 3.5/3.6).
 #
-# Stage markers follow vault plan 0002: this skeleton (3.1) carries the
-# trigger/permission contract and a file-set smoke; stages 3.2-3.6 replace
-# the smoke with the real image build, the gate runs, and drift tracking.
+# Stage markers follow vault plan 0002: stage 3.2 carries the image build
+# (raw docker buildx steps — decided over a third-party build action: no new
+# action supply-chain surface, explicit BuildKit cache semantics), the
+# entrypoint parity smoke, and the digest/size record; stages 3.3-3.6 add the
+# full gate runs and drift tracking on top.
 # ==============================================================================
 
 name: SnifferEngine Docker Environment Validation
@@ -55,24 +57,51 @@ permissions:
   # job — the skeleton needs nothing beyond read access.
 
 jobs:
-  skeleton:
-    name: Docker File-Set Smoke (Stage 3.1)
+  build:
+    name: Build Dev Image
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Verify Docker Environment File Set
+      # Decision (stage 3.2): raw docker buildx steps, not a third-party
+      # build action — no new action supply-chain surface and fully explicit
+      # cache semantics. BuildKit's gha cache (mode=max exports intermediate
+      # layers) makes rebuilds incremental across runs.
+      - name: Build the Dev Image (BuildKit, gha layer cache)
         run: |
           set -eu
-          MISSING=0
-          for f in docker/Dockerfile docker/entrypoint.sh docker-compose.yml .dockerignore rust-toolchain.toml; do
-            if [ ! -f "$f" ]; then
-              echo "::error::expected docker environment file is missing: $f"
-              MISSING=1
-            fi
-          done
-          if [ "$MISSING" -ne 0 ]; then
-            exit 1
-          fi
-          echo "docker environment file set present (trigger: ${{ github.event_name }})"
+          docker buildx build \
+            --file docker/Dockerfile \
+            --target dev \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --tag snifferengine-dev:ci \
+            .
+
+      # Boot the freshly built image with the repository mounted at
+      # /workspace: the entrypoint runs its three-way toolchain parity
+      # assertion (toml == baked image record == rustc) and the environment
+      # exports, then hands over to `true`. The full scripts/check.sh gate
+      # run lands in stage 3.3.
+      - name: Entrypoint Parity Smoke
+        run: |
+          set -eu
+          docker run --rm \
+            --volume "$PWD:/workspace" \
+            snifferengine-dev:ci \
+            true
+
+      # Fulfills plan stage 1.6's deferred "digest recorded" evidence and
+      # gives reviewers an immediate size signal.
+      - name: Record Image Digest and Size
+        run: |
+          set -eu
+          DIGEST="$(docker inspect --format '{{.Id}}' snifferengine-dev:ci)"
+          SIZE_BYTES="$(docker image inspect snifferengine-dev:ci --format '{{.Size}}')"
+          SIZE_MB="$((SIZE_BYTES / 1024 / 1024))"
+          {
+            echo "### Docker Dev Image (target: dev)"
+            echo "- digest: \`${DIGEST}\`"
+            echo "- size: ${SIZE_MB} MB"
+          } >> "$GITHUB_STEP_SUMMARY"
