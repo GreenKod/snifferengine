@@ -6,8 +6,9 @@ name: SnifferEngine Nix Environment Validation
 #
 # This workflow owns its inline path filters and shares nothing with the
 # consolidated quality workflow: no .github/paths.yaml category is added
-# and check.yml is never modified by the Nix work. A Nix change validates
-# here on its own; unrelated changes never trigger it.
+# and check.yml is never modified by the Nix work — it is only READ, as
+# the parity reference the android gate asserts against. A Nix change
+# validates here on its own; unrelated changes never trigger it.
 #
 # Trigger semantics (vault plan stage 3.6):
 #   * push/PR on the nix surface — blocking validation of author changes;
@@ -40,7 +41,10 @@ on:
       - "Cargo.lock"
       - "scripts/check.sh"
       - "scripts/update-nix-pins.sh"
+      - "scripts/android_parity_gate.sh"
       - ".github/workflows/nix.yml"
+      # Read-only parity reference for the android gate (never modified).
+      - ".github/workflows/check.yml"
   pull_request:
     branches: ["**"]
     paths:
@@ -52,7 +56,10 @@ on:
       - "Cargo.lock"
       - "scripts/check.sh"
       - "scripts/update-nix-pins.sh"
+      - "scripts/android_parity_gate.sh"
       - ".github/workflows/nix.yml"
+      # Read-only parity reference for the android gate (never modified).
+      - ".github/workflows/check.yml"
   workflow_dispatch:
   schedule:
     # Wednesday 06:23 UTC — offset minute avoids the top-of-hour API spike
@@ -77,12 +84,15 @@ jobs:
           missing=0
           for f in \
             shell.nix \
+            shell-android.nix \
             nix/pins.nix \
             nix/rust.nix \
             nix/host-deps.nix \
             nix/shell-hook.nix \
+            nix/android.nix \
             scripts/update-nix-pins.sh \
-            scripts/check.sh; do
+            scripts/check.sh \
+            scripts/android_parity_gate.sh; do
             if [ ! -f "$f" ]; then
               echo "::error file=$f::missing nix surface file"
               missing=1
@@ -92,7 +102,14 @@ jobs:
             echo "::error::the guarded nix surface is incomplete"
             exit 1
           fi
-          echo "Nix surface present: 5 nix modules + 2 guarded scripts"
+          echo "Nix surface present: 7 nix files + 3 guarded scripts"
+
+      # Stage 2.3 — the Nix Android environment and the runner-side CI
+      # android job must declare the same toolchain surface. Pure text
+      # parsing: no nix, no network, so it lives in this cheap audit job.
+      - name: Assert Android Environment Parity (nix ↔ check.yml)
+        run: |
+          bash scripts/android_parity_gate.sh
 
       - name: Print Trigger Context
         run: |
