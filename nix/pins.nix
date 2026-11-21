@@ -11,7 +11,10 @@
 
 let
   # A pinned GitHub input: a repository frozen at one branch-head commit,
-  # with the content hash of the generated archive. The upstream branch
+  # with the NAR hash of the unpacked archive tree. Modern Nix's
+  # fetchTarball verifies the NAR hash of the unpacked tree — NOT the
+  # archive file hash; the first CI run of the validation workflow proved
+  # file hashes are rejected with a NAR hash mismatch. The upstream branch
   # keeps moving; the (rev, sha256) pair below is what actually freezes
   # the input. The "# pin:<name>-rev" / "# pin:<name>-sha256" anchor
   # comments are machine-read by scripts/update-nix-pins.sh — keep them
@@ -34,7 +37,7 @@ let
       # pin:nixpkgs-rev
       rev = "ab5c18fdedfc8f9bbc9d773f10a540790e2787a7";
       # pin:nixpkgs-sha256
-      sha256 = "14k4s78nn79ayz445gpj9lyap7p00a2hxjwlwklg4a5vlnpn1l1a";
+      sha256 = "0zbbcrl62rigv70w68k8r293zpvpq25izrzdidkz0qdagqvw59c8";
     };
 
     # rust-overlay — supplies the exact toolchain declared by
@@ -48,7 +51,7 @@ let
       # pin:rust-overlay-rev
       rev = "52db20539ec0ba063479d66092992d9efcf456ff";
       # pin:rust-overlay-sha256
-      sha256 = "1mvkdavxy43majdxp157my08k4f4s8mh3g5q69xa6z204rmfwslp";
+      sha256 = "10l9f3818z7nnpqdkh8b8gkrkggvazk78i4mmayk2209r21r43jn";
     };
   };
 in

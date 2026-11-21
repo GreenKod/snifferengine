@@ -10,11 +10,14 @@
 #   bash scripts/update-nix-pins.sh --audit     # fail on floating nix references
 #
 # Hashing strategy:
-#   1. nix-prefetch-url when a Nix installation is available.
-#   2. curl + sha256sum + an embedded reimplementation of Nix's nix32
-#      encoding (upstream: src/libutil/base-nix-32.cc) otherwise, so the
-#      script also works on machines without Nix. The fallback needs
-#      python3; downloads are cached in $PIN_CACHE_DIR and reused.
+#   Modern Nix fetchTarball verifies the NAR hash of the UNPACKED tree,
+#   not the archive file hash — proven by the first CI run of the
+#   validation workflow, where file hashes were rejected with a NAR hash
+#   mismatch. This script therefore downloads the tarball, unpacks it,
+#   and serializes a faithful NAR (upstream: src/libutil/archive.cc +
+#   archive.hh, validated against a runner-reported NAR hash) to produce
+#   exactly the value pins.nix needs. Requires python3; downloads are
+#   cached in $PIN_CACHE_DIR and reused.
 #
 # Non-goals: this script never edits anything outside nix/pins.nix.
 # ==============================================================================
@@ -75,14 +78,34 @@ resolve_head() { # <owner> <repo> <branch> — prints the branch-head commit sha
   printf '%s' "$rev"
 }
 
-nix32_from_hex() { # <hex-sha256> — prints the Nix32 (base32) representation
-  python3 - "$1" <<'PYEOF'
+# Computes the NAR hash of the unpacked tarball tree — the only hash
+# semantics modern Nix fetchTarball accepts (see the header comment).
+# Faithful reimplementation of Nix's wire format, validated against a
+# runner-reported NAR hash for the nixpkgs pin.
+prefetch() { # <url> — prints the Nix32 NAR sha256 of the tarball at url
+  local url="$1" cache_file
+  command -v python3 >/dev/null 2>&1 || die "prefetch needs python3"
+  cache_file="$PIN_CACHE_DIR/$(printf '%s' "$url" | sed 's|^https://github.com/||; s|/archive/|-|; s|/|-|g')"
+  mkdir -p "$PIN_CACHE_DIR"
+  if [ ! -s "$cache_file" ]; then
+    info "downloading $(basename "$cache_file") …"
+    curl -sfL --max-time 900 -o "$cache_file" "$url" || die "download failed: $url"
+  fi
+  info "serializing NAR of $(basename "$cache_file") …"
+  python3 - "$cache_file" <<'PYEOF'
+import base64
+import hashlib
+import os
+import stat
+import struct
 import sys
+import tarfile
+import tempfile
 
-ALPHABET = "0123456789abcdfghijklmnpqrsvwxyz"
+NIX32 = "0123456789abcdfghijklmnpqrsvwxyz"
 
 
-def encode(data: bytes) -> str:
+def nix32(data: bytes) -> str:
     size = len(data)
     length = (size * 8 - 1) // 5 + 1
     out = []
@@ -93,29 +116,84 @@ def encode(data: bytes) -> str:
         c = data[i] >> j
         if i < size - 1:
             c |= data[i + 1] << (8 - j)
-        out.append(ALPHABET[c & 0x1F])
+        out.append(NIX32[c & 0x1F])
     return "".join(out)
 
 
-print(encode(bytes.fromhex(sys.argv[1])))
-PYEOF
-}
+def pad(n: int) -> int:
+    return (-n) % 8
 
-prefetch() { # <url> — prints the Nix32 sha256 of the tarball at url
-  local url="$1" cache_file hex
-  if command -v nix-prefetch-url >/dev/null 2>&1; then
-    nix-prefetch-url --type sha256 "$url" 2>/dev/null
-    return
-  fi
-  command -v python3 >/dev/null 2>&1 || die "prefetch needs nix-prefetch-url (Nix) or python3 (fallback)"
-  cache_file="$PIN_CACHE_DIR/$(printf '%s' "$url" | sed 's|^https://github.com/||; s|/archive/|-|; s|/|-|g')"
-  mkdir -p "$PIN_CACHE_DIR"
-  if [ ! -s "$cache_file" ]; then
-    info "downloading $(basename "$cache_file") …"
-    curl -sfL --max-time 900 -o "$cache_file" "$url" || die "download failed: $url"
-  fi
-  hex="$(sha256sum "$cache_file" | cut -d' ' -f1)"
-  nix32_from_hex "$hex"
+
+class NarSink:
+    def __init__(self) -> None:
+        self.h = hashlib.sha256()
+
+    def out(self, data: bytes) -> None:
+        self.h.update(data)
+
+    def wint(self, i: int) -> None:
+        self.out(struct.pack("<q", i))
+
+    def wstr(self, s: bytes) -> None:
+        self.wint(len(s))
+        self.out(s)
+        self.out(b"\x00" * pad(len(s)))
+
+
+def dump_node(sink: NarSink, path: str) -> None:
+    st = os.lstat(path)
+    sink.wstr(b"(")
+    if stat.S_ISDIR(st.st_mode):
+        sink.wstr(b"type")
+        sink.wstr(b"directory")
+        for child in sorted(os.listdir(path), key=lambda c: c.encode()):
+            sink.wstr(b"entry")
+            sink.wstr(b"(")
+            sink.wstr(b"name")
+            sink.wstr(child.encode())
+            sink.wstr(b"node")
+            dump_node(sink, os.path.join(path, child))
+            sink.wstr(b")")
+        sink.wstr(b")")
+    elif stat.S_ISREG(st.st_mode):
+        sink.wstr(b"type")
+        sink.wstr(b"regular")
+        if st.st_mode & 0o111:
+            sink.wstr(b"executable")
+            sink.wstr(b"")
+        sink.wstr(b"contents")
+        with open(path, "rb") as f:
+            data = f.read()
+        size = len(data)
+        sink.wint(size)
+        sink.out(data)
+        sink.out(b"\x00" * pad(size))
+        sink.wstr(b")")
+    elif stat.S_ISLNK(st.st_mode):
+        sink.wstr(b"type")
+        sink.wstr(b"symlink")
+        sink.wstr(b"target")
+        sink.wstr(os.readlink(path).encode())
+        sink.wstr(b")")
+    else:
+        raise RuntimeError(f"unsupported file type: {path}")
+
+
+def nar_hash_of_tarball(tarball: str) -> bytes:
+    with tempfile.TemporaryDirectory(prefix="sniffers-nar-") as tmp:
+        with tarfile.open(tarball, "r:gz") as tf:
+            tf.extractall(tmp, filter="data")
+        entries = os.listdir(tmp)
+        if len(entries) != 1:
+            raise RuntimeError(f"expected a single top-level directory, got {entries}")
+        sink = NarSink()
+        sink.wstr(b"nix-archive-1")
+        dump_node(sink, os.path.join(tmp, entries[0]))
+        return sink.h.digest()
+
+
+print(nix32(nar_hash_of_tarball(sys.argv[1])))
+PYEOF
 }
 
 # ------------------------------------------------------------------------------
