@@ -164,8 +164,10 @@ impl Renderer for GlowRenderer {
         let is_identity =
             (scale - 1.0).abs() < 1e-4 && rotate.abs() < 1e-4 && tx.abs() < 1e-4 && ty.abs() < 1e-4;
 
+        // No batch flushes: every shape and image instance carries its own
+        // decomposed transform through `a_transform`; text tracks its own
+        // transform change in `draw_text_impl` and flushes there.
         if is_identity {
-            // Identity transform: inherits the current matrix without altering GL shader uniform or flushing batches!
             let current = self
                 .transform_stack
                 .last()
@@ -175,9 +177,6 @@ impl Renderer for GlowRenderer {
             return;
         }
 
-        self.flush_shapes();
-        self.flush_text();
-        self.flush_images();
         let p = self
             .transform_stack
             .last()
@@ -212,14 +211,9 @@ impl Renderer for GlowRenderer {
     }
 
     fn pop_transform(&mut self) {
+        // No batch flushes: instances carry their own transforms and text
+        // manages its own transform-change detection.
         if self.transform_stack.len() > 1 {
-            let top = self.transform_stack.last().copied();
-            let parent = self.transform_stack[self.transform_stack.len() - 2];
-            if top != Some(parent) {
-                self.flush_shapes();
-                self.flush_text();
-                self.flush_images();
-            }
             self.transform_stack.pop();
         }
     }
@@ -241,6 +235,12 @@ impl Renderer for GlowRenderer {
 
     fn load_wallpaper(&mut self, rgba_pixels: &[u8], width: u32, height: u32) {
         self.load_wallpaper_impl(rgba_pixels, width, height);
+        // Pre-blur the wallpaper for Android's frosted-glass backdrop so
+        // every frame pays zero blur cost (Stage 3.3).
+        #[cfg(target_os = "android")]
+        {
+            self.pre_blur_wallpaper_impl();
+        }
     }
 
     fn draw_wallpaper(&mut self, width: f32, height: f32) {
@@ -256,13 +256,91 @@ impl Renderer for GlowRenderer {
 
         #[cfg(target_os = "android")]
         {
-            // On mobile TBDR GPUs, full-screen framebuffer blit & multi-pass Kawase blur
-            // creates a 20ms GPU pipeline stall (dropping frame pacing to 30-35ms).
-            // Android WindowManager natively provides hardware FLAG_BLUR_BEHIND for the wallpaper.
-            // On the UI layer, we render a sleek semi-transparent acrylic frosted glass tint (0.05ms)
-            // that preserves the glassmorphism aesthetic while running at a locked 60/120 FPS.
-            let glass_tint = tint.unwrap_or(0xCC0F_172A);
-            self.draw_rect(rect, glass_tint, radius, 0.0, None);
+            // On mobile TBDR GPUs, the per-frame framebuffer capture and
+            // multi-pass Kawase blur that the desktop path uses would create
+            // a 20ms GPU pipeline stall. Instead, the wallpaper was blurred
+            // once at load time (pre_blur_wallpaper_impl) into a small FBO
+            // texture; each frame just binds that texture through the glass
+            // shader — zero blit, zero per-frame blur passes.
+            //
+            // If the pre-blurred texture is not yet available (e.g. no
+            // wallpaper loaded), fall back to the acrylic tint so the
+            // backdrop never renders as a transparent hole.
+            let blurred = match self.blurred_wallpaper_texture {
+                Some(tex) => tex,
+                None => {
+                    let glass_tint = tint.unwrap_or(0xCC0F_172A);
+                    self.draw_rect(rect, glass_tint, radius, 0.0, None);
+                    return;
+                }
+            };
+
+            self.flush_shapes();
+            self.flush_text();
+
+            unsafe {
+                self.ensure_quad_vao();
+                self.gl.viewport(
+                    0,
+                    0,
+                    f32_to_i32(self.resolution.0),
+                    f32_to_i32(self.resolution.1),
+                );
+
+                self.gl.use_program(Some(self.glass_program));
+
+                if let Some(loc) = &self.glass_uniforms.u_resolution {
+                    self.gl
+                        .uniform_2_f32(Some(loc), self.resolution.0, self.resolution.1);
+                }
+                if let Some(loc) = &self.glass_uniforms.u_rect_pos {
+                    self.gl.uniform_2_f32(Some(loc), rect.x, rect.y);
+                }
+                if let Some(loc) = &self.glass_uniforms.u_rect_size {
+                    self.gl.uniform_2_f32(Some(loc), rect.width, rect.height);
+                }
+                if let Some(loc) = &self.glass_uniforms.u_radius {
+                    self.gl.uniform_1_f32(Some(loc), radius);
+                }
+                let tint_col = tint.map_or([0.0, 0.0, 0.0, 0.0], batching::unpack_color);
+                if let Some(loc) = &self.glass_uniforms.u_tint_color {
+                    self.gl.uniform_4_f32(
+                        Some(loc),
+                        tint_col[0],
+                        tint_col[1],
+                        tint_col[2],
+                        tint_col[3],
+                    );
+                }
+                if let Some(loc) = &self.glass_uniforms.u_global_alpha {
+                    self.gl.uniform_1_f32(Some(loc), self.global_alpha);
+                }
+
+                // The glass shader draws a rounded-corner composite of the
+                // blurred backdrop; with a pre-blurred source there is no
+                // per-frame capture or multi-pass cost.
+                const IDENTITY_MATRIX: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+                if let Some(loc) = &self.glass_uniforms.u_transform {
+                    self.gl
+                        .uniform_matrix_3_f32_slice(Some(loc), false, &IDENTITY_MATRIX);
+                }
+
+                self.upload_clip_uniforms(
+                    self.glass_uniforms.u_clip_rect.as_ref(),
+                    self.glass_uniforms.u_clip_radius.as_ref(),
+                    self.glass_uniforms.u_clip_inv_transform.as_ref(),
+                );
+
+                self.gl.active_texture(glow::TEXTURE0);
+                self.gl.bind_texture(glow::TEXTURE_2D, Some(blurred));
+                if let Some(loc) = &self.glass_uniforms.u_blur_texture {
+                    self.gl.uniform_1_i32(Some(loc), 0);
+                }
+
+                self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+
+                self.gl.bind_texture(glow::TEXTURE_2D, None);
+            }
         }
 
         #[cfg(not(target_os = "android"))]

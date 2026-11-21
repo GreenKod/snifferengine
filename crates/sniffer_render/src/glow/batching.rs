@@ -10,6 +10,53 @@ use sniffer_core::math::Rect;
 /// pipeline.
 pub const IDENTITY_TRANSFORM: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 
+/// Decomposes a column-major 3x3 affine matrix into a per-instance
+/// transform `(scale, rotation in degrees, pivot_x, pivot_y)` with the
+/// pivot expressed in rect-local pixels.
+///
+/// Returns [`IDENTITY_TRANSFORM`] when the linear part is identity (pure
+/// translation) or when the fixed-point system is degenerate; the caller
+/// handles pure translations through pre-translated rect positions.
+#[must_use]
+pub fn decompose_to_instance_transform(matrix: &[f32; 9], rect: &Rect) -> [f32; 4] {
+    // Column-major layout: col0 = (m[0], m[1], m[2]), col1 = (m[3], m[4],
+    // m[5]), col2 = (m[6], m[7], m[8]). The affine rows are:
+    // row0: a=m[0], b=m[3]    row1: c=m[1], d=m[4]    translation: m[6], m[7]
+    let a = matrix[0];
+    let b = matrix[3];
+    let c = matrix[1];
+    let d = matrix[4];
+    let tx = matrix[6];
+    let ty = matrix[7];
+
+    // Extract scale and rotation from the linear part.
+    let scale = a.hypot(c);
+    let rotation_deg = c.atan2(a).to_degrees();
+
+    // Identity linear part: no per-instance transform needed.
+    if (scale - 1.0).abs() < 1e-6 && rotation_deg.abs() < 1e-6 {
+        return IDENTITY_TRANSFORM;
+    }
+
+    // Fixed point of the affine map: (M_linear - I) * pivot = -translate
+    //   (a-1)*px + b*py    = -tx
+    //   c*px    + (d-1)*py = -ty
+    let det = (a - 1.0) * (d - 1.0) - b * c;
+    if det.abs() < 1e-12 {
+        return IDENTITY_TRANSFORM;
+    }
+
+    let world_pivot_x = (-tx * (d - 1.0) + b * ty) / det;
+    let world_pivot_y = (tx * c - (a - 1.0) * ty) / det;
+
+    [
+        scale,
+        rotation_deg,
+        world_pivot_x - rect.x,
+        world_pivot_y - rect.y,
+    ]
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct QuadInstanceData {
@@ -363,6 +410,18 @@ pub fn unpack_color(color: u32) -> [f32; 4] {
 }
 
 impl GlowRenderer {
+    /// Computes the per-instance transform for a rect from the current
+    /// transform stack. Shape and image instances carry this instead of
+    /// relying on a batch-wide uniform, so transform pushes and pops no
+    /// longer break batches.
+    #[must_use]
+    pub fn current_instance_transform(&self, rect: &Rect) -> [f32; 4] {
+        match self.transform_stack.last() {
+            Some(matrix) => decompose_to_instance_transform(matrix, rect),
+            None => IDENTITY_TRANSFORM,
+        }
+    }
+
     pub fn flush_shapes(&mut self) {
         if self.shape_batch.is_empty() {
             return;
@@ -380,10 +439,12 @@ impl GlowRenderer {
                 self.resolution.1,
             );
 
-            if let Some(t) = self.transform_stack.last() {
-                self.gl
-                    .uniform_matrix_3_f32_slice(u.u_transform.as_ref(), false, t);
-            }
+            // Every instance carries its own per-instance transform, so
+            // the batch-wide uniform stays identity regardless of the
+            // transform scopes the instances were produced under.
+            const IDENTITY_MATRIX: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+            self.gl
+                .uniform_matrix_3_f32_slice(u.u_transform.as_ref(), false, &IDENTITY_MATRIX);
 
             self.upload_clip_uniforms(
                 u.u_clip_rect.as_ref(),
@@ -430,10 +491,11 @@ impl GlowRenderer {
                 self.resolution.1,
             );
 
-            if let Some(t) = self.transform_stack.last() {
-                self.gl
-                    .uniform_matrix_3_f32_slice(u.u_transform.as_ref(), false, t);
-            }
+            // Every image instance carries its own per-instance transform,
+            // so the batch-wide uniform stays identity.
+            const IDENTITY_MATRIX: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+            self.gl
+                .uniform_matrix_3_f32_slice(u.u_transform.as_ref(), false, &IDENTITY_MATRIX);
 
             self.upload_clip_uniforms(
                 u.u_clip_rect.as_ref(),
@@ -538,7 +600,7 @@ impl GlowRenderer {
             shadow_blur: 0.0,
             is_gradient,
             border_color_bottom: b_col_bot,
-            transform: IDENTITY_TRANSFORM,
+            transform: self.current_instance_transform(&rect),
         };
 
         let _ = self.shape_batch.push_instance(instance);
@@ -602,7 +664,7 @@ impl GlowRenderer {
             shadow_blur: blur,
             is_gradient: 0.0,
             border_color_bottom: [0.0; 4],
-            transform: IDENTITY_TRANSFORM,
+            transform: self.current_instance_transform(&shadow_rect),
         };
 
         if self.shape_batch.is_full() {
@@ -628,13 +690,14 @@ impl GlowRenderer {
             }
         }
 
-        let (instance, shadow_rect) = QuadInstanceData::new_dual_shadow(
+        let (mut instance, shadow_rect) = QuadInstanceData::new_dual_shadow(
             rect,
             radius,
             elevation,
             shadow_color,
             self.global_alpha,
         );
+        instance.transform = self.current_instance_transform(&shadow_rect);
 
         // Clip container culling: discard if completely outside active clip
         if self.transform_stack.is_empty() {
