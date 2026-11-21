@@ -1,0 +1,27 @@
+# ==============================================================================
+# SnifferEngine — build context hygiene (vault plan 0002 — Stage 1.2)
+# ==============================================================================
+# Keeps the docker build context small and the image hermetic. These rules
+# affect image builds only — docker-compose.yml bind mounts are untouched by
+# them (files excluded here are still visible inside the container through
+# the /workspace bind mount).
+#
+# The full worktrees/ exclusion is load-bearing: a checked-out worktree can
+# contain complete repositories and build artifacts; shipping them into the
+# context would slow every build.
+# ==============================================================================
+
+.git
+target
+worktrees
+vault
+docs
+dist
+scratch
+.cargo
+.cache
+.extensions
+.vscode
+.idea
+*.log
+*_screenshot.png

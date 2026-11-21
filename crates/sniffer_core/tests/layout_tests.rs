@@ -195,9 +195,9 @@ fn test_full_hierarchy_card_position() {
         children: vec![card],
     };
 
-    // 3. Page Row Track
+    // 3. App Grid Track
     let track = Element::Container {
-        id: Some("bench_track".to_string()),
+        id: Some("app_grid_track".to_string()),
         style: Style {
             width: Dimension::Pixels(1080.0),
             height: Dimension::Pixels(1776.0),
@@ -210,7 +210,7 @@ fn test_full_hierarchy_card_position() {
 
     // 4. ScrollView pager
     let pager = Element::ScrollView {
-        id: Some("bench_pager".to_string()),
+        id: Some("app_grid_pager".to_string()),
         style: Style {
             width: Dimension::Pixels(1080.0),
             height: Dimension::Pixels(1776.0),
