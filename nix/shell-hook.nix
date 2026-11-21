@@ -80,15 +80,20 @@ in
   printf "''${_C_RESET}\n"
 
   # -- Step 0 — The pinned toolchain wins over host shims ----------------------
-  # The first validate-android run showed a rustup proxy running inside the
-  # "pure" shell: it read rust-toolchain.toml, auto-installed 1.98.0 and
-  # built with a host-only sysroot (E0463: no aarch64-linux-android std).
-  # Version parity alone cannot catch that, because rustup reports the same
-  # channel. Make the pinned closure authoritative: prepend its bin, refuse
-  # rustup auto-install, and pin CARGO/RUSTC (cargo-ndk spawns `$CARGO`,
-  # cargo spawns `$RUSTC`). The resolution assertion below fails loudly if
-  # a shim still wins.
-  export PATH="${rustToolchain}/bin:''${PATH}"
+  # CI proved a rustup proxy can hijack builds inside the "pure" shell:
+  # cargo resolves EXTERNAL subcommands (clippy, fmt, ndk, machete) in
+  # $CARGO_HOME/bin FIRST — before PATH. cargo's search_directories
+  # (src/bin/cargo/main.rs) prepends that directory unless it already
+  # appears IN PATH, in which case PATH order is authoritative. On the
+  # runner ~/.cargo/bin holds rustup shims; the cargo-clippy shim read
+  # rust-toolchain.toml, auto-installed 1.98.0 and built the android
+  # targets with a host-only sysroot (E0463) — and version parity could
+  # not catch it, because rustup reports the same channel. Fix, in
+  # order: keep the cargo home bin IN PATH (after the pinned toolchain,
+  # so cargo honors PATH order); refuse rustup auto-install; pin
+  # CARGO/RUSTC (cargo-ndk spawns `$CARGO`). The resolution assertion
+  # below fails loudly if a shim still wins.
+  export PATH="${rustToolchain}/bin:''${PATH}:''${CARGO_HOME:-''${HOME}/.cargo}/bin"
   export RUSTUP_AUTO_INSTALL=0
 
   # cargo-ndk spawns `$CARGO` (src/cargo.rs) and cargo spawns `$RUSTC`;
@@ -124,19 +129,24 @@ in
 
   # Version parity alone is not enough: a host shim that auto-installs the
   # same channel reports the right version while building with a host-only
-  # sysroot. Prove that rustc AND cargo actually resolve into the pinned
-  # closure.
+  # sysroot. Prove that the binaries that actually build the workspace —
+  # rustc, cargo, AND the external subcommand cargo hijacked (cargo-clippy)
+  # — resolve into the pinned closure.
   _expected_rustc="$(readlink -f "${rustToolchain}/bin/rustc")"
   _actual_rustc="$(readlink -f "$(command -v rustc)")"
   _expected_cargo="$(readlink -f "${rustToolchain}/bin/cargo")"
   _actual_cargo="$(readlink -f "$(command -v cargo)")"
+  _expected_clippy="$(readlink -f "${rustToolchain}/bin/cargo-clippy")"
+  _actual_clippy="$(readlink -f "$(command -v cargo-clippy)")"
 
-  if [ "''${_actual_rustc}" != "''${_expected_rustc}" ] || [ "''${_actual_cargo}" != "''${_expected_cargo}" ]; then
+  if [ "''${_actual_rustc}" != "''${_expected_rustc}" ] || [ "''${_actual_cargo}" != "''${_expected_cargo}" ] || [ "''${_actual_clippy}" != "''${_expected_clippy}" ]; then
     _gh_error "Toolchain resolution FAILED (a host shim is shadowing the pinned closure)"
-    printf "       expected rustc : %s\n" "''${_expected_rustc}"
-    printf "       resolved rustc : %s\n" "''${_actual_rustc}"
-    printf "       expected cargo : %s\n" "''${_expected_cargo}"
-    printf "       resolved cargo : %s\n" "''${_actual_cargo}"
+    printf "       expected rustc  : %s\n" "''${_expected_rustc}"
+    printf "       resolved rustc  : %s\n" "''${_actual_rustc}"
+    printf "       expected cargo  : %s\n" "''${_expected_cargo}"
+    printf "       resolved cargo  : %s\n" "''${_actual_cargo}"
+    printf "       expected clippy : %s\n" "''${_expected_clippy}"
+    printf "       resolved clippy : %s\n" "''${_actual_clippy}"
     printf "       Remove the host toolchain from PATH or use nix-shell --pure.\n"
     exit 1
   fi

@@ -216,11 +216,18 @@ jobs:
             set -euo pipefail
             echo "--- PATH entries ---"
             printf "%s\n" "${PATH}" | tr ":" "\n"
+            echo "--- cargo home ---"
+            echo "HOME      : ${HOME}"
+            echo "CARGO_HOME: ${CARGO_HOME:-unset (defaults to ~/.cargo)}"
             echo "--- resolution ---"
             echo "rustc    : $(command -v rustc)"
             echo "cargo    : $(command -v cargo)"
             echo "rustc -> : $(readlink -f "$(command -v rustc)")"
             echo "cargo -> : $(readlink -f "$(command -v cargo)")"
+            echo "--- external subcommand resolution (cargo home vs PATH) ---"
+            for sub in cargo-clippy cargo-fmt cargo-machete cargo-ndk; do
+              printf "%-14s: %s\n" "$sub" "$(command -v "$sub" || echo missing)"
+            done
             echo "--- rustup / cargo env ---"
             env | grep -E "^(RUST|CARGO)" | sort || true
             echo "--- versions ---"
@@ -247,6 +254,7 @@ jobs:
             echo "::group::Toolchain resolution"
             echo "rustc: $(command -v rustc) -> $(readlink -f "$(command -v rustc)")"
             echo "cargo: $(command -v cargo) -> $(readlink -f "$(command -v cargo)")"
+            echo "clippy: $(command -v cargo-clippy) -> $(readlink -f "$(command -v cargo-clippy)")"
             echo "::endgroup::"
             echo "::group::Android (ARM64) Check & Clippy"
             cargo ndk --target aarch64-linux-android clippy --locked --workspace --all-targets -- -D warnings
