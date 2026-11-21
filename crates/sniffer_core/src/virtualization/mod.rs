@@ -1,9 +1,13 @@
 //! Virtual Page Window Manager & Element Recycling Pool
 //!
-//! Prunes the full Element AST tree before layout calculation.
-//! Keeps only active and adjacent (current_page ± 1) page children.
-//! Dynamically expands prefetch window during high-speed fling gestures.
-//! Moves off-screen page children to `page_cache` and `ElementPool`.
+//! Generic `ScrollView` content virtualization built on the declarative
+//! pager contract: any `ScrollView` that declares pager mode (`snap_x` +
+//! `page_count`) exposes its page row for window pruning, recycling, and
+//! restoration. No element ID or naming convention is consulted anywhere.
+//!
+//! Off-screen page children move to `page_cache` and `ElementPool`;
+//! the runtime window policy is centrally gated in
+//! [`VirtualPageManager::virtualize_tree_with_velocity`].
 
 use crate::types::Element;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -64,8 +68,10 @@ impl Default for ElementPool {
 }
 
 /// Virtual page window manager.
-/// Prunes the 140+ element AST tree before Taffy layout calculation.
-/// Expands window dynamically during fling gestures (pre-materialization).
+///
+/// Generic `ScrollView` pager virtualization: discovers the first
+/// declarative pager (`snap_x` + `page_count`) in the tree and manages its
+/// page window through `page_cache` and the recycled `element_pool`.
 #[derive(Debug)]
 pub struct VirtualPageManager {
     /// Stripped page children storage (page_index -> children)
@@ -119,12 +125,15 @@ impl VirtualPageManager {
         self.virtualize_tree_with_velocity(root, 0.0);
     }
 
-    /// Virtualization with dynamic prefetch window based on scroll velocity.
-    /// During fast flings (|velocity| > 400), window radius expands to 2-3 pages
-    /// to eliminate pop-in or black frames.
+    /// Virtualization gate with dynamic prefetch window based on scroll velocity.
+    ///
+    /// The page-window policy is intentionally dormant for now: with the
+    /// declarative pager contract in place, mid-swipe recalculation spikes
+    /// outweigh the gains for typical page counts, so the tree stays fully
+    /// materialized. The planned visible-range culling (axis-aligned pruning
+    /// of `ScrollView` content in the layout and render phases) supersedes
+    /// page-window stripping and will hook in through this entry point.
     pub fn virtualize_tree_with_velocity(&mut self, _root: &mut Element, _velocity: f32) {
-        // Virtualization is disabled to prevent mid-swipe layout recalculation CPU spikes.
-        // With <10 pages, Taffy can handle the full tree effortlessly.
         self.active = false;
     }
 
@@ -150,30 +159,33 @@ impl VirtualPageManager {
     /// Invalidates caches on viewport resize or rotation,
     /// updating stub container dimensions and forcing re-virtualization.
     pub fn on_viewport_resized(&mut self, _new_w: f32, _new_h: f32, root: &mut Element) {
-        let cached_keys: Vec<usize> = self.page_cache.keys().copied().collect();
-        for page_idx in cached_keys {
-            if let Some(track_children) = Self::find_track_children_mut(root, &mut self.total_pages)
-                && let Some(page_el) = track_children.get_mut(page_idx)
-            {
-                self.restore_page(page_idx, page_el);
-            }
-        }
+        self.restore_all_cached_pages(root);
         self.page_cache.clear();
         self.virtualize_tree(root);
     }
 
     /// Invalidates caches on viewport dimension or orientation changes.
     pub fn invalidate_on_resize(&mut self, root: &mut Element) {
-        let cached_keys: Vec<usize> = self.page_cache.keys().copied().collect();
-        for page_idx in cached_keys {
-            if let Some(track_children) = Self::find_track_children_mut(root, &mut self.total_pages)
-                && let Some(page_el) = track_children.get_mut(page_idx)
-            {
-                self.restore_page(page_idx, page_el);
-            }
-        }
+        self.restore_all_cached_pages(root);
         self.page_cache.clear();
         self.virtualize_tree(root);
+    }
+
+    /// Restores every cached page into its slot in the paged track.
+    fn restore_all_cached_pages(&mut self, root: &mut Element) {
+        let cached_keys: Vec<usize> = self.page_cache.keys().copied().collect();
+        if cached_keys.is_empty() {
+            return;
+        }
+        if let Some(track_children) =
+            Self::find_paged_track_children_mut(root, &mut self.total_pages)
+        {
+            for page_idx in cached_keys {
+                if let Some(page_el) = track_children.get_mut(page_idx) {
+                    self.restore_page(page_idx, page_el);
+                }
+            }
+        }
     }
 
     /// Strips children of a specific page and moves them to cache or pool.
@@ -212,12 +224,19 @@ impl VirtualPageManager {
         }
     }
 
-    /// Locates "app_grid_pager" -> "app_grid_track" children inside the AST tree.
-    fn find_track_children_mut<'a>(
+    /// Resolves the page-slot list of the first declarative pager in the
+    /// tree.
+    ///
+    /// The pager contract is purely declarative: a `ScrollView` in pager
+    /// mode carries `snap_x` (the page width) plus `page_count`. Its first
+    /// child container is the page row, whose children are the page slots —
+    /// the shape snap-scrolling already requires for horizontal layout. No
+    /// element ID or naming convention is consulted.
+    fn find_paged_track_children_mut<'a>(
         root: &'a mut Element,
         out_page_count: &mut usize,
     ) -> Option<&'a mut Vec<Element>> {
-        let pager = Self::find_element_by_id_mut(root, "app_grid_pager")?;
+        let pager = Self::find_element_by_predicate_mut(root, &Self::is_declarative_pager)?;
         if let Element::ScrollView {
             children,
             page_count,
@@ -228,14 +247,49 @@ impl VirtualPageManager {
                 *out_page_count = *pc as usize;
             }
             if let Some(Element::Container {
-                id,
                 children: track_children,
                 ..
             }) = children.first_mut()
-                && id.as_deref() == Some("app_grid_track")
             {
                 return Some(track_children);
             }
+        }
+        None
+    }
+
+    /// Matches `ScrollView`s that declare pager mode through the declarative
+    /// `snap_x` + `page_count` fields.
+    fn is_declarative_pager(element: &Element) -> bool {
+        matches!(
+            element,
+            Element::ScrollView {
+                snap_x: Some(_),
+                page_count: Some(_),
+                ..
+            }
+        )
+    }
+
+    /// Recursively finds the first element matching `predicate` (DFS).
+    pub fn find_element_by_predicate_mut<'a>(
+        element: &'a mut Element,
+        predicate: &dyn Fn(&Element) -> bool,
+    ) -> Option<&'a mut Element> {
+        if predicate(element) {
+            return Some(element);
+        }
+
+        match element {
+            Element::Container { children, .. }
+            | Element::ScrollView { children, .. }
+            | Element::SharedView { children, .. } => {
+                for child in children {
+                    if let Some(found) = Self::find_element_by_predicate_mut(child, predicate) {
+                        return Some(found);
+                    }
+                }
+            }
+            _ => {}
         }
         None
     }
@@ -245,22 +299,6 @@ impl VirtualPageManager {
         element: &'a mut Element,
         target_id: &str,
     ) -> Option<&'a mut Element> {
-        if element.id() == Some(target_id) {
-            return Some(element);
-        }
-
-        match element {
-            Element::Container { children, .. }
-            | Element::ScrollView { children, .. }
-            | Element::SharedView { children, .. } => {
-                for child in children {
-                    if let Some(found) = Self::find_element_by_id_mut(child, target_id) {
-                        return Some(found);
-                    }
-                }
-            }
-            _ => {}
-        }
-        None
+        Self::find_element_by_predicate_mut(element, &|e| e.id() == Some(target_id))
     }
 }
