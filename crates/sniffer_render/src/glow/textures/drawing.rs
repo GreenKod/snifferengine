@@ -320,6 +320,7 @@ impl GlowRenderer {
                     radius,
                     alpha: self.global_alpha,
                     pad: [0.0, 0.0],
+                    transform: crate::glow::batching::IDENTITY_TRANSFORM,
                 };
 
                 if self.image_batch.is_full() {
