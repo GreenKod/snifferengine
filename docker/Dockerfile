@@ -38,26 +38,53 @@ ENV CARGO_HOME=/usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV PATH=/usr/local/cargo/bin:$PATH
 
-# ca-certificates are installed already because every later layer needs TLS
-# (rustup static archive, toolchain downloads). Stage 1.3 replaces this layer
-# with the full apt closure mirroring the CI linux job (mesa/GL, the explicit
-# X11 client stack, xkbcommon, wayland, alsa-lib, gtk-3, ssl, zlib, …).
+# System dependency closure (stage 1.3): the consolidated CI's Linux apt list
+# (.github/workflows/check.yml, validate-linux) plus the explicit X11 client
+# stack — a container cannot rely on the implicit preinstalls of GitHub's
+# ubuntu runners, the same lesson encoded in nix/host-deps.nix. GL uses the
+# CI names (libgl1-mesa-*) plus the explicit libegl/libgles split for the
+# wayland/EGL path. Every package name below is verified against the Debian
+# trixie package index (binary-amd64, 2026-11-21). Debian's xvfb package
+# ships the xvfb-run wrapper.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      xz-utils \
+      build-essential \
+      pkg-config \
+      cmake \
+      ninja-build \
+      clang \
+      libclang-dev \
+      libgl1-mesa-dri \
+      libgl1-mesa-dev \
+      libegl-dev \
+      libgles-dev \
+      mesa-utils \
+      libx11-dev \
+      libxcursor-dev \
+      libxrandr-dev \
+      libxi-dev \
+      libxinerama-dev \
+      libxkbcommon-dev \
+      libxkbcommon-x11-dev \
+      libwayland-dev \
+      libasound2-dev \
+      libgtk-3-dev \
+      libssl-dev \
+      zlib1g-dev \
+      nodejs \
+      python3 \
+      git \
+      xvfb
 
 # ------------------------------------------------------------------------------
 # toolchain — version-pinned rustup + toolchain from rust-toolchain.toml
 # ------------------------------------------------------------------------------
 FROM base AS toolchain
-
-# curl is needed for the rustup fetch; stage 1.3's apt closure will absorb
-# this minimal apt step into the base layer later.
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && \
-    apt-get install -y --no-install-recommends curl
 
 # rustup acquisition: versioned static archive with the sha256 recorded and
 # verified at build time — never the floating sh.rustup.rs entry point
