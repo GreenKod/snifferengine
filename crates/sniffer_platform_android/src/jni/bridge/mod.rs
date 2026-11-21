@@ -50,6 +50,48 @@ pub(crate) fn context<'local>(env: &Env<'local>) -> JObject<'local> {
     unsafe { JObject::from_raw(env, raw) }
 }
 
+/// Returns the app's private files directory (survives restarts, unlike the
+/// cache dir).
+///
+/// Returns `None` when the Android context or the JNI calls are unavailable, in
+/// which case callers must keep working with in-memory-only storage.
+#[must_use]
+pub fn get_files_dir() -> Option<std::path::PathBuf> {
+    let vm = vm();
+    let path =
+        vm.attach_current_thread_for_scope::<_, _, JniError>(|env| -> Result<String, JniError> {
+            let ctx = context(env);
+            if ctx.is_null() {
+                return Err(JniError::NullPtr("context"));
+            }
+            let files_dir = env
+                .call_method(
+                    &ctx,
+                    jni_str!("getFilesDir"),
+                    jni_sig!("()Ljava/io/File;"),
+                    &[],
+                )?
+                .l()?;
+            if files_dir.is_null() {
+                return Err(JniError::NullPtr("files_dir"));
+            }
+            let path_obj = env
+                .call_method(
+                    &files_dir,
+                    jni_str!("getAbsolutePath"),
+                    jni_sig!("()Ljava/lang/String;"),
+                    &[],
+                )?
+                .l()?;
+            if path_obj.is_null() {
+                return Err(JniError::NullPtr("files_dir_path"));
+            }
+            let path_jstring = env.as_cast::<jni::objects::JString>(&path_obj)?;
+            path_jstring.try_to_string(env)
+        });
+    path.ok().map(std::path::PathBuf::from)
+}
+
 /// Adds `FLAG_ACTIVITY_NEW_TASK` to the provided intent.
 ///
 /// # Errors

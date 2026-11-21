@@ -43,6 +43,7 @@ fn resolve_viewport_metrics(
         || (height - state.layout.cached_screen_size.1).abs() > 0.5;
 
     if screen_changed {
+        let (old_width, old_height) = state.layout.cached_screen_size;
         state.layout.cached_screen_size = (width, height);
         state.layout.cached_density = crate::jni::get_density();
         let insets = crate::jni::get_system_insets(app).unwrap_or_else(|| {
@@ -63,11 +64,23 @@ fn resolve_viewport_metrics(
         sniffer_core::types::SCREEN_HEIGHT
             .store(height.to_bits(), std::sync::atomic::Ordering::Relaxed);
 
-        state
-            .runtime
-            .plugin_registry
-            .broadcast("dock.stateChanged", "{}");
-        state.runtime.plugin_registry.broadcast("dock.ready", "{}");
+        // Generic system channels: any viewport metrics change lets plugins
+        // rebuild their trees with fresh geometry; an orientation flip gets
+        // its own precise signal. No launcher-specific channel names are
+        // involved anywhere in the engine.
+        let (density, _) = state.layout.cached_density;
+        state.runtime.plugin_registry.broadcast(
+            "system.metricsChanged",
+            &format!("{{\"width\":{width},\"height\":{height},\"density\":{density}}}"),
+        );
+        let orientation_flipped =
+            old_width > 0.0 && old_height > 0.0 && (old_width > old_height) != (width > height);
+        if orientation_flipped {
+            state.runtime.plugin_registry.broadcast(
+                "system.orientationChanged",
+                &format!("{{\"isLandscape\":{}}}", width > height),
+            );
+        }
         state
             .runtime
             .plugin_registry

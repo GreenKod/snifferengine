@@ -246,7 +246,7 @@ fn test_spring_transition_json_roundtrip_and_pressed_state() {
     }
 
     let mut manager = TransitionManager::default();
-    let card_id = "dock_app_circle_phone";
+    let card_id = "animated_card";
     let resting_style = sniffer_core::style::Style {
         elevation: 6.0,
         shadow_blur: 10.0,

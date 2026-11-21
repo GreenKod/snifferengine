@@ -16,13 +16,47 @@ function Print-Header {
 $startTime = Get-Date
 
 try {
-    # 1. Engine Architecture Purity
+    # 1. Engine Architecture Purity (shared rule set with scripts/purity_gate.sh)
     Print-Header -Title "1/8: Checking Engine Architecture Purity (no launcher leaks)"
-    $leaks = Select-String -Path "crates\**\*.rs", "framework\**\*.js" -Pattern "app_drawer" -ErrorAction SilentlyContinue
-    if ($leaks) {
-        throw "Found launcher-specific 'app_drawer' references inside engine crates or framework!"
+
+    function Find-EnginePurityViolations {
+        param(
+            [string[]]$Tokens,
+            [string[]]$Layers
+        )
+        $violations = @()
+        foreach ($token in $Tokens) {
+            foreach ($layer in $Layers) {
+                $files = Get-ChildItem -Path $layer -Recurse -File -ErrorAction SilentlyContinue
+                $hits = $files | Select-String -Pattern $token -ErrorAction SilentlyContinue
+                foreach ($hit in $hits) {
+                    $violations += "$($hit.Path):$($hit.LineNumber): [$token] $($hit.Line.Trim())"
+                }
+            }
+        }
+        return $violations
     }
-    Write-Host "[OK] Engine architecture purity verified." -ForegroundColor Green
+
+    # Group A: launcher identities and launcher plugin IPC channel names —
+    # banned everywhere in engine code, platform crates included.
+    $groupA = Find-EnginePurityViolations -Tokens @("app_drawer", "dock\.", "dock_app", "app_item_") -Layers @("crates", "framework")
+    # Group B: host-owned concepts (e.g. the app-icon scheme) banned in the
+    # generic engine layers; tests may reference retired names on purpose.
+    $groupB = Find-EnginePurityViolations -Tokens @("page_indicator_container", "app-icon") -Layers @(
+        "crates\sniffer_core\src",
+        "crates\sniffer_render\src",
+        "crates\sniffer_plugin\src",
+        "crates\sniffer_pkg\src",
+        "crates\sniffer_engine\src",
+        "packages",
+        "framework"
+    )
+    if ($groupA -or $groupB) {
+        if ($groupA) { $groupA | ForEach-Object { Write-Host $_ -ForegroundColor Red } }
+        if ($groupB) { $groupB | ForEach-Object { Write-Host $_ -ForegroundColor Red } }
+        throw "Engine architecture purity gate failed (see violations above)!"
+    }
+    Write-Host "[OK] Engine purity verified: no launcher-specific references in engine layers." -ForegroundColor Green
 
     # 2. Code Formatting
     Print-Header -Title "2/8: Checking Code Formatting (cargo fmt)"

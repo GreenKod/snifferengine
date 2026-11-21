@@ -1,4 +1,5 @@
 use sniffer_core::layout::LayoutNode;
+use sniffer_core::style::PointerEvents;
 use sniffer_core::types::Element;
 use sniffer_core::{Point, Rect};
 
@@ -85,13 +86,16 @@ fn find_clicked_button_with_scroll_recursive(
                     ));
                 }
             }
-            if let Some(id_str) = id {
-                if !sniffer_core::ui::widget::is_structural_layout_id(id_str) {
-                    return Some((
-                        sniffer_core::ui::widget::fnv1a(id_str.as_bytes()),
-                        transformed_rect,
-                    ));
-                }
+            // Declarative clickability: any element with `pointer_events: auto`
+            // is a hit-test target. Structural containers opt out with
+            // `pointer_events: none`; no ID name guessing is involved.
+            if let Some(id_str) = id
+                && element.style().pointer_events == PointerEvents::Auto
+            {
+                return Some((
+                    sniffer_core::ui::widget::fnv1a(id_str.as_bytes()),
+                    transformed_rect,
+                ));
             }
             None
         }
@@ -123,7 +127,13 @@ fn find_clicked_button_with_scroll_recursive(
                     ));
                 }
             }
-            // Note: ScrollView is a scroll viewport container, not a clickable button target.
+            // A ScrollView is a scroll viewport by type, never a clickable
+            // button target itself; its children remain eligible.
+            None
+        }
+        Element::PageIndicator { .. } => {
+            // A declarative pager indicator is purely decorative and never a
+            // pointer hit-test target; taps pass through to what lies behind.
             None
         }
         Element::Label { id, .. }
@@ -132,7 +142,9 @@ fn find_clicked_button_with_scroll_recursive(
         | Element::Checkbox { id, .. }
         | Element::Slider { id, .. }
         | Element::ProgressBar { id, .. } => {
-            if let Some(id_str) = id {
+            if let Some(id_str) = id
+                && element.style().pointer_events == PointerEvents::Auto
+            {
                 return Some((
                     sniffer_core::ui::widget::fnv1a(id_str.as_bytes()),
                     transformed_rect,

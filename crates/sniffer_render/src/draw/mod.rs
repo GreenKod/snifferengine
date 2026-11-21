@@ -2,6 +2,7 @@
 
 pub mod culling;
 pub mod elements;
+pub mod image_schemes;
 
 pub use culling::{
     find_clicked_button, find_clicked_button_with_scroll, find_hovered_button,

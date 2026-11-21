@@ -8,12 +8,11 @@ pub enum LogLevel {
 
 /// Normalizes raw plugin identifiers into short, readable names.
 ///
-/// For example:
-/// - `"com.sniffer.defaultui"` -> `"default_ui"`
-/// - `"com.sniffer.clockwidget"` -> `"clock_widget"`
-/// - `"com.sniffer.devkithud"` -> `"devkit_hud"`
-/// - `"com.sniffer.dock"` -> `"dock"`
-/// - `"com.sniffer.logger"` -> `"logger_plugin"`
+/// The engine stays plugin-agnostic: it never enumerates specific plugin
+/// names. A `com.sniffer.` namespace prefix is stripped and any remaining
+/// namespace segments collapse to the final segment, so
+/// `"com.sniffer.anything"` and `"com.example.myplugin"` both reduce to a
+/// single readable token.
 #[must_use]
 pub fn clean_plugin_id(id: &str) -> String {
     let trimmed = id.trim();
@@ -21,20 +20,9 @@ pub fn clean_plugin_id(id: &str) -> String {
         return "system".to_string();
     }
     let stripped = trimmed.strip_prefix("com.sniffer.").unwrap_or(trimmed);
-    match stripped {
-        "defaultui" | "default_ui" => "default_ui".to_string(),
-        "clockwidget" | "clock_widget" => "clock_widget".to_string(),
-        "devkithud" | "devkit_hud" => "devkit_hud".to_string(),
-        "dock" => "dock".to_string(),
-        "logger" | "logger_plugin" => "logger_plugin".to_string(),
-        other => {
-            if let Some(pos) = other.rfind('.') {
-                other[pos + 1..].to_string()
-            } else {
-                other.to_string()
-            }
-        }
-    }
+    stripped
+        .rsplit_once('.')
+        .map_or_else(|| stripped.to_string(), |(_, last)| last.to_string())
 }
 
 /// Cleans redundant prefix tags often emitted by JS plugins (e.g. `[Dock Plugin] `, `[Clock Widget] `)

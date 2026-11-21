@@ -9,8 +9,8 @@ echo -e "\033[1;36m SnifferEngine Local CI Pre-flight Quality Check\033[0m"
 echo -e "\033[1;36m========================================================\033[0m\n"
 
 echo -e "\033[1;34m[1/8] Checking Engine Architecture Purity (no launcher leaks)...\033[0m"
-if grep -ri "app_drawer" crates/ framework/; then
-    echo -e "\033[1;31m[FAIL] Found launcher-specific 'app_drawer' references inside engine crates or framework!\033[0m"
+if ! bash scripts/purity_gate.sh; then
+    echo -e "\033[1;31m[FAIL] Engine architecture purity gate failed!\033[0m"
     exit 1
 fi
 

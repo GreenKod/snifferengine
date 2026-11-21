@@ -1,7 +1,7 @@
 use sniffer_core::layout::calculate_layout;
 use sniffer_core::math::Size;
-use sniffer_core::style::{Dimension, FlexDirection, Style};
-use sniffer_core::types::Element;
+use sniffer_core::style::{Dimension, FlexDirection, Position, Style};
+use sniffer_core::types::{Element, PageIndicatorOrientation};
 
 #[test]
 fn test_basic_container_layout() {
@@ -479,4 +479,74 @@ fn test_persistent_taffy_buffer_lifecycle() {
         assert_eq!(l_consecutive.rect.width, 300.0);
         assert_eq!(l_consecutive.children[0].rect.width, 80.0);
     }
+}
+
+#[test]
+fn test_page_indicator_intrinsic_cross_axis_sizing() {
+    // A 1080x2400 surface gives vmin = 10.8 px; the largest interpolated dot
+    // pill is 3.6 vmin = 38.88 px.
+    let portrait = Element::PageIndicator {
+        id: Some("portrait_indicator".to_string()),
+        page_count: Some(4),
+        orientation: PageIndicatorOrientation::Horizontal,
+        style: Style {
+            position: Position::Absolute,
+            width: Dimension::Percent(100.0),
+            ..Style::default()
+        },
+    };
+    let portrait_layout = calculate_layout(&portrait, Size::new(1080.0, 2400.0), 0.0, 0.0);
+    assert!(
+        (portrait_layout.rect.width - 1080.0).abs() < 0.01,
+        "explicit percentage width must be preserved"
+    );
+    assert!(
+        (portrait_layout.rect.height - 38.88).abs() <= 0.5,
+        "Auto cross axis must adopt the max dot pill footprint (Taffy rounds \
+         to whole pixels), got {}",
+        portrait_layout.rect.height
+    );
+    assert_eq!(
+        portrait_layout.widget_id,
+        Some(sniffer_core::ui::widget::fnv1a(b"portrait_indicator"))
+    );
+
+    let landscape = Element::PageIndicator {
+        id: None,
+        page_count: Some(4),
+        orientation: PageIndicatorOrientation::Vertical,
+        style: Style {
+            position: Position::Absolute,
+            height: Dimension::Percent(100.0),
+            ..Style::default()
+        },
+    };
+    let landscape_layout = calculate_layout(&landscape, Size::new(1080.0, 2400.0), 0.0, 0.0);
+    assert!(
+        (landscape_layout.rect.height - 2400.0).abs() < 0.01,
+        "explicit percentage height must be preserved"
+    );
+    assert!(
+        (landscape_layout.rect.width - 38.88).abs() <= 0.5,
+        "Auto cross axis must adopt the max dot pill footprint (Taffy rounds \
+         to whole pixels), got {}",
+        landscape_layout.rect.width
+    );
+
+    // Without pages there is no intrinsic footprint to adopt.
+    let empty = Element::PageIndicator {
+        id: None,
+        page_count: None,
+        orientation: PageIndicatorOrientation::Horizontal,
+        style: Style {
+            position: Position::Absolute,
+            width: Dimension::Percent(100.0),
+            ..Style::default()
+        },
+    };
+    let empty_layout = calculate_layout(&empty, Size::new(1080.0, 2400.0), 0.0, 0.0);
+    assert!(
+        empty_layout.rect.height < 1.0,
+        "an empty indicator must not claim the intrinsic dot footprint"
+    );
 }
