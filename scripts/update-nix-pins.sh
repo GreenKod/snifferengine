@@ -226,6 +226,7 @@ audit() {
   local failed=0 targets=() pattern
   # Every current and future nix module belongs to the audit surface.
   [ -f shell.nix ] && targets+=("shell.nix")
+  [ -f shell-android.nix ] && targets+=("shell-android.nix")
   for f in nix/*.nix; do
     [ -e "$f" ] && targets+=("$f")
   done

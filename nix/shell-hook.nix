@@ -19,7 +19,40 @@
 #   }
 # ==============================================================================
 
-{ pkgs, expectedChannel, nixpkgsRev }:
+{ pkgs, expectedChannel, nixpkgsRev, androidSdk ? null, ndkVersion ? null }:
+
+let
+  # Android environment exports — only generated when an SDK composition is
+  # passed (shell-android.nix). Mirrors the runner-side env of the CI
+  # validate-android job: NDK location on PATH for cargo-ndk, and the exact
+  # BINDGEN_EXTRA_CLANG_ARGS the CI sets per target.
+  androidSection =
+    if androidSdk == null then "" else
+    ''
+      # -- Android NDK environment (android mode only) ------------------------
+      _gh_group "Set up Android SDK / NDK"
+
+      export ANDROID_HOME="${androidSdk}/libexec/android-sdk"
+      export ANDROID_NDK_ROOT="''${ANDROID_HOME}/ndk/${ndkVersion}"
+      export ANDROID_NDK_HOME="''${ANDROID_NDK_ROOT}"
+      export PATH="''${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:''${PATH}"
+
+      if [ ! -x "''${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]; then
+        _gh_error "NDK layout missing at ''${ANDROID_NDK_ROOT}"
+        exit 1
+      fi
+
+      export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=aarch64-linux-android30"
+      export BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi="--target=armv7-linux-androideabi"
+      export BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android="--target=x86_64-linux-android"
+      export BINDGEN_EXTRA_CLANG_ARGS_i686_linux_android="--target=i686-linux-android"
+
+      _gh_kv "ANDROID_HOME" "''${ANDROID_HOME}"
+      _gh_kv "NDK" "''${ANDROID_NDK_ROOT}"
+      _gh_ok "Android environment ready"
+      _gh_endgroup
+    '';
+in
 
 ''
   # -- ANSI colour helpers (GitHub Actions palette) ----------------------------
@@ -90,7 +123,7 @@
 
   _gh_ok "LIBCLANG_PATH, BINDGEN args, PKG_CONFIG_PATH, LD_LIBRARY_PATH, OPENSSL_*"
   _gh_endgroup
-
+${androidSection}
   # -- Step 3 — Quick commands --------------------------------------------------
   _gh_group "Quick commands"
 
