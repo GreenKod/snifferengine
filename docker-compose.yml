@@ -1,0 +1,33 @@
+# ==============================================================================
+# SnifferEngine — development container composition (vault plan 0002 — Stage 1.2)
+# ==============================================================================
+# Usage:
+#   docker compose run --rm dev ./scripts/check.sh   # full 8-gate quality run
+#   docker compose run --rm dev bash                 # interactive dev shell
+#
+# Design decisions (stage 1.2):
+#   • The repository is bind-mounted at /workspace so edits on the host are
+#     live inside the container.
+#   • Build caches are named volumes, NOT part of the image and NOT the host
+#     filesystem: container cargo artifacts (Debian trixie) stay isolated from
+#     any host-built target/ directory, and they persist across runs.
+#   • The nested named volume over /workspace/target shadows the host target
+#     directory inside the container (more specific mounts win).
+# ==============================================================================
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: dev
+    volumes:
+      - .:/workspace
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - dev-target:/workspace/target
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  dev-target:
