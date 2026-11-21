@@ -203,11 +203,30 @@ jobs:
           key: nix-downloads-v1-${{ hashFiles('nix/pins.nix') }}
           restore-keys: nix-downloads-v1-
 
+      # Inventory of the pinned toolchain: proves which rustlib targets the
+      # aggregated rust-bin toolchain actually carries (kept as a cheap
+      # permanent diagnostic).
+      - name: Diagnose the Pinned Android Toolchain
+        run: |
+          # shellcheck disable=SC2016
+          # The expressions below must expand inside the inner nix-shell
+          # bash, not in this outer step shell.
+          nix-shell shell-android.nix --pure --run '
+            set -euo pipefail
+            echo "rustc  : $(rustc --version)"
+            echo "sysroot: $(rustc --print sysroot)"
+            echo "--- rustlib inventory ---"
+            ls "$(rustc --print sysroot)/lib/rustlib"
+          '
+
       # The android-mode hook exports ANDROID_HOME/NDK_ROOT and the CI's
       # BINDGEN_EXTRA_CLANG_ARGS per target, then fails fast if the NDK
       # layout is missing.
       - name: Cross-Compile Inside the Pure Pinned Android Shell
         run: |
+          # shellcheck disable=SC2016
+          # ANDROID_NDK_ROOT below must expand inside the inner nix-shell
+          # bash, not in this outer step shell.
           nix-shell shell-android.nix --pure --run '
             set -euo pipefail
             echo "::group::Android environment (asserted by the shell hook)"
