@@ -9,12 +9,13 @@ name: SnifferEngine Nix Environment Validation
 # and check.yml is never modified by the Nix work. A Nix change validates
 # here on its own; unrelated changes never trigger it.
 #
-# Trigger semantics (vault plan stage 3.6 will complete the story):
-#   * push/PR on the nix surface — blocking validation of author changes
-#   * workflow_dispatch — on-demand proof
+# Trigger semantics (vault plan stage 3.6):
+#   * push/PR on the nix surface — blocking validation of author changes;
+#     no tracking issues, the failing run itself is the signal
+#   * workflow_dispatch — on-demand proof, tracked like scheduled runs
 #   * weekly schedule — drift detection against a moving runner world;
-#     failures on scheduled runs will open a labeled tracking issue that
-#     stays open until a green run closes it
+#     failures on scheduled/dispatch runs open a labeled tracking issue
+#     (nix-environment-drift) that stays open until a green run closes it
 # ==============================================================================
 
 on:
@@ -251,3 +252,66 @@ jobs:
       - name: Run the Full Quality Gate Inside the Pure Pinned Shell
         run: |
           nix-shell --pure --run 'bash scripts/check.sh'
+
+  # ------------------------------------------------------------------
+  # Stage 3.6 — Drift tracking for scheduled/dispatch runs (house
+  # pattern: patch-freshness.yml). Push/PR failures are the author's
+  # own blocking signal and never open issues. Scheduled/dispatch
+  # failures open or update one labeled issue that stays open until a
+  # green scheduled run closes it.
+  # ------------------------------------------------------------------
+  drift-tracking:
+    name: Drift Tracking (scheduled runs only)
+    runs-on: ubuntu-latest
+    needs:
+      [
+        skeleton,
+        nix-bootstrap,
+        validate-shell,
+        validate-gates,
+        validate-android,
+      ]
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    steps:
+      - name: Open or Update Tracking Issue
+        if: contains(needs.*.result, 'failure')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Ensure the tracker label exists (idempotent).
+          gh api --method POST "repos/${{ github.repository }}/labels" \
+            -f name="nix-environment-drift" \
+            -f color="BFD4F2" \
+            -f description="The pinned nix environment no longer validates" \
+            --silent > /dev/null 2>&1 || true
+
+          printf '%s\n' \
+            "The scheduled validation of the pinned Nix environment failed: the development environment no longer builds, enters, or passes the quality gates against the current GitHub runner world." \
+            "" \
+            "- Audit output: see the failing scheduled run below" \
+            "- Update procedure: scripts/update-nix-pins.sh (nix/pins.nix) and the shell modules under nix/" \
+            "- Run: ${RUN_URL}" > /tmp/tracker-issue-body.md
+
+          OPEN_ISSUES=$(gh issue list --label "nix-environment-drift" --state open --json number --jq '.[].number')
+          if [ -z "$OPEN_ISSUES" ]; then
+            gh issue create \
+              --title "Nix environment no longer validates (weekly drift)" \
+              --body-file /tmp/tracker-issue-body.md \
+              --label "nix-environment-drift"
+          else
+            for issue in $OPEN_ISSUES; do
+              gh issue comment "$issue" --body "Scheduled validation is still failing: ${RUN_URL}"
+            done
+          fi
+
+      - name: Close Resolved Tracking Issue
+        if: contains(needs.*.result, 'failure') == false && contains(needs.*.result, 'cancelled') == false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          OPEN_ISSUES=$(gh issue list --label "nix-environment-drift" --state open --json number --jq '.[].number')
+          for issue in $OPEN_ISSUES; do
+            gh issue close "$issue" --comment "Scheduled validation is green again: ${RUN_URL}"
+          done
