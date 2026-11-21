@@ -52,15 +52,55 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # ------------------------------------------------------------------------------
 FROM base AS toolchain
 
-# Stage 1.4 fills this layer:
-#   • rustup-init from the versioned static archive
-#     (https://static.rust-lang.org/rustup/archive/<version>/…) with its
-#     sha256 recorded here — never the floating sh.rustup.rs entry point
-#   • COPY rust-toolchain.toml + `rustup toolchain install` (reads channel,
-#     profile minimal, clippy + rustfmt straight from the repository file)
-#   • `rustup target add` for the host + 4 Android targets, mirroring the
-#     target set of nix/rust.nix
-RUN echo "vault plan 0002 stage 1.4 lands the toml-driven toolchain here"
+# curl is needed for the rustup fetch; stage 1.3's apt closure will absorb
+# this minimal apt step into the base layer later.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends curl
+
+# rustup acquisition: versioned static archive with the sha256 recorded and
+# verified at build time — never the floating sh.rustup.rs entry point
+# (ADR 001 §3.2).
+ARG RUSTUP_VERSION=1.29.2
+ARG RUSTUP_SHA256=5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4
+
+RUN curl -fsSL \
+      "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init" \
+      -o /tmp/rustup-init && \
+    echo "${RUSTUP_SHA256}  /tmp/rustup-init" | sha256sum -c - && \
+    chmod +x /tmp/rustup-init && \
+    /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain none && \
+    rm /tmp/rustup-init
+
+# Toolchain: installed FROM the repository's rust-toolchain.toml (channel,
+# minimal profile, clippy + rustfmt). The channel is never duplicated into
+# this file — parity by construction (ADR 001 §3.3). The argument-less
+# `rustup toolchain install` and the component/target commands below all
+# resolve the same toml (verified empirically against rustup 1.29.x).
+COPY rust-toolchain.toml /tmp/toolchain-toml/rust-toolchain.toml
+WORKDIR /tmp/toolchain-toml
+
+RUN --mount=type=cache,target=/usr/local/rustup/downloads \
+    rustup toolchain install && \
+    rustup component add rust-src && \
+    rustup target add \
+      x86_64-unknown-linux-gnu \
+      aarch64-linux-android \
+      armv7-linux-androideabi \
+      i686-linux-android \
+      x86_64-linux-android
+
+# scripts/check.sh runtime tools: explicitly pinned crate versions
+# (crates.io, 2026-11-21). Neither crate ships a Cargo.lock, so --locked is
+# impossible; free transitive resolution is the accepted trade-off for
+# source installs of version-pinned tools.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo install --version 0.10.1 cargo-machete && \
+    cargo install --version 4.1.2 cargo-ndk
+
+WORKDIR /workspace
 
 # ------------------------------------------------------------------------------
 # dev — the interactive development environment
