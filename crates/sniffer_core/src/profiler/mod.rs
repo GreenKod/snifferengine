@@ -698,26 +698,13 @@ fn draw_touch_hitboxes(
     }
 
     let elem_id = element.id();
-    let is_button = match elem_id {
-        Some(k) => {
-            element.style().pointer_events != crate::style::PointerEvents::None
-                && (k.starts_with("app_item_")
-                    || k.starts_with("dock_app_btn_")
-                    || k.starts_with("dock_app_circle_")
-                    || k.starts_with("fab_")
-                    || k.starts_with("app_card_")
-                    || k.starts_with("btn_")
-                    || k.starts_with("action_")
-                    || k.starts_with("clock_")
-                    || k.contains("btn")
-                    || k.contains("card")
-                    || k.contains("item"))
-        }
-        None => matches!(
-            element,
-            crate::types::Element::TextInput { .. } | crate::types::Element::Checkbox { .. }
-        ),
-    };
+    // Declarative hitbox overlay: every declared touch target (an element
+    // with an ID, `pointer_events: auto`, and not a scroll viewport) is
+    // highlighted — mirroring the culling hit-test policy exactly, with no
+    // ID name guessing involved.
+    let is_button = elem_id.is_some()
+        && !matches!(element, crate::types::Element::ScrollView { .. })
+        && element.style().pointer_events != crate::style::PointerEvents::None;
 
     let tx = element.style().transform.translate_x;
     let ty = element.style().transform.translate_y;
@@ -739,14 +726,13 @@ fn draw_touch_hitboxes(
     }
 
     if is_button && layout.rect.width > 2.0 && layout.rect.height > 2.0 {
-        let is_dock = elem_id.as_ref().is_some_and(|k| k.contains("dock"));
-        let (fill_color, border_color) = if is_dock {
-            (0x284A_DE80_u32, Some(0xEE4A_DE80_u32))
-        } else {
-            (0x2038_BDF8_u32, Some(0xDD38_BDF8_u32))
-        };
-
-        renderer.draw_rect(layout.rect, fill_color, 4.0, 1.5, border_color);
+        renderer.draw_rect(
+            layout.rect,
+            0x2038_BDF8_u32,
+            4.0,
+            1.5,
+            Some(0xDD38_BDF8_u32),
+        );
     }
 
     match element {

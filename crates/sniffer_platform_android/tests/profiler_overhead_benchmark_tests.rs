@@ -8,13 +8,13 @@ fn build_test_ui_tree(node_count: usize) -> Element {
     let mut children = Vec::with_capacity(node_count);
     for i in 0..node_count {
         children.push(Element::Label {
-            id: Some(format!("app_item_{i}")),
+            id: Some(format!("bench_item_{i}")),
             text: format!("Application {i}"),
             style: Style::default(),
         });
     }
     Element::Container {
-        id: Some("app_grid".to_string()),
+        id: Some("bench_grid".to_string()),
         style: Style::default(),
         children,
     }

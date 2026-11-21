@@ -49,12 +49,7 @@ jobs:
           fetch-depth: 0
 
       - name: Engine Architecture Purity Gate (No Launcher Leaks)
-        run: |
-          if grep -ri "app_drawer" crates/ framework/; then
-            echo "::error::Found launcher-specific 'app_drawer' references inside engine crates or framework!"
-            exit 1
-          fi
-          echo "Engine architecture purity verified (0 launcher-specific references)."
+        run: bash scripts/purity_gate.sh
 
       - name: Install and Run actionlint
         run: |

@@ -5,17 +5,13 @@ use std::time::Duration;
 
 #[test]
 fn test_clean_plugin_id() {
-    assert_eq!(clean_plugin_id("com.sniffer.defaultui"), "default_ui");
-    assert_eq!(clean_plugin_id("default_ui"), "default_ui");
-    assert_eq!(clean_plugin_id("com.sniffer.clockwidget"), "clock_widget");
-    assert_eq!(clean_plugin_id("clock_widget"), "clock_widget");
-    assert_eq!(clean_plugin_id("com.sniffer.devkithud"), "devkit_hud");
-    assert_eq!(clean_plugin_id("devkit_hud"), "devkit_hud");
-    assert_eq!(clean_plugin_id("com.sniffer.dock"), "dock");
-    assert_eq!(clean_plugin_id("dock"), "dock");
-    assert_eq!(clean_plugin_id("com.sniffer.logger"), "logger_plugin");
-    assert_eq!(clean_plugin_id("logger_plugin"), "logger_plugin");
+    // The engine stays plugin-agnostic: prefixes are stripped and only the
+    // final namespace segment survives.
+    assert_eq!(clean_plugin_id("com.sniffer.defaultui"), "defaultui");
+    assert_eq!(clean_plugin_id("com.sniffer.anything"), "anything");
+    assert_eq!(clean_plugin_id("com.sniffer.myplugin.core"), "core");
     assert_eq!(clean_plugin_id("org.custom.my_plugin"), "my_plugin");
+    assert_eq!(clean_plugin_id("id_without_dots"), "id_without_dots");
     assert_eq!(clean_plugin_id(""), "system");
     assert_eq!(clean_plugin_id("   "), "system");
 }
@@ -87,10 +83,10 @@ fn test_format_log_line() {
         "# error: failed to parse time from clock_widget [x7]"
     );
 
-    // Automatic ID cleanup
+    // Automatic ID cleanup: the final namespace segment becomes the tag.
     assert_eq!(
         format_log_line("com.sniffer.defaultui", LogLevel::Info, "test", 5),
-        "# test from default_ui, type info [x5]"
+        "# test from defaultui, type info [x5]"
     );
 }
 
@@ -105,13 +101,13 @@ fn test_deduplicating_logger_counts() {
     // Check internal entry count
     let entries = logger.entries.lock().unwrap();
     let key = (
-        "default_ui".to_string(),
+        "defaultui".to_string(),
         LogLevel::Info,
         "test repetition".to_string(),
     );
     let entry = entries.get(&key).expect("entry must exist");
     assert_eq!(entry.count, 5);
-    assert_eq!(entry.plugin, "default_ui");
+    assert_eq!(entry.plugin, "defaultui");
     assert_eq!(entry.message, "test repetition");
     assert_eq!(entry.level, LogLevel::Info);
 }
