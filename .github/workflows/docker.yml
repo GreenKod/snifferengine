@@ -11,23 +11,25 @@
 # in-container gate run (stage 3.3) proves the whole repository against
 # the container environment, so any commit can break it.
 #
-# Stage markers follow vault plan 0002: stages 3.2-3.3 carry the image
+# Stage markers follow vault plan 0002: stages 3.2-3.4 carry the image
 # build (raw docker buildx steps — decided over a third-party build action:
 # no new action supply-chain surface, explicit BuildKit cache semantics),
-# the entrypoint parity smoke, the full in-container gate run, and the
-# digest/size record; stages 3.4-3.6 add Android validation and drift
-# tracking on top.
+# the entrypoint parity smoke, the full in-container gate run, the Android
+# validation, and the digest/size record; stage 3.5 adds the scheduled
+# drift-tracking issue lifecycle; stage 3.6 adds digest drift detection.
 # ==============================================================================
 
 name: SnifferEngine Docker Environment Validation
 
 on:
+  # Single-run-per-commit policy (maintainer decision, 2026-11-21): the
+  # pull_request trigger was removed — with push covering every branch, a
+  # PR-branch push would otherwise fire BOTH events (push + synchronize)
+  # and run the workflow twice per commit.
   push:
     # Every commit: the in-container gate run (stage 3.3) proves the whole
     # repository against the container environment, so any commit can
     # break it — no path filtering.
-    branches: ["**"]
-  pull_request:
     branches: ["**"]
   workflow_dispatch:
   schedule:
@@ -108,3 +110,135 @@ jobs:
             echo "- digest: \`${DIGEST}\`"
             echo "- size: ${SIZE_MB} MB"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------------------
+  # validate-android (vault plan 0002 — stage 3.4): the Stage 2.3 Android
+  # gates inside the freshly built image, mirroring the consolidated CI's
+  # Android job. Rebuilds from the gha layer cache; the parity assert runs
+  # first so drift fails before a compile cycle is wasted.
+  # ------------------------------------------------------------------------------
+  validate-android:
+    name: Build Image and Validate Android Cross-Checks
+    runs-on: ubuntu-latest
+    # Two full android-target dependency compilations share the repository
+    # target dir through the mount; 90 minutes bounds the cold-cache worst
+    # case without cutting legitimate runs short.
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same raw docker buildx approach as validate-gates; the gha layer
+      # cache (mode=max) makes this rebuild incremental on every commit.
+      - name: Build the Dev Image (BuildKit, gha layer cache)
+        run: |
+          set -eu
+          docker buildx build \
+            --file docker/Dockerfile \
+            --target dev \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --tag snifferengine-dev:ci \
+            .
+
+      # Stage 2.3's drift assert: the image's NDK / build-tools / platform
+      # must equal the check.yml pins — fail hard before any compiling.
+      - name: Assert Android Version Parity (image vs check.yml)
+        run: |
+          set -eu
+          docker run --rm \
+            --volume "$PWD:/workspace" \
+            snifferengine-dev:ci \
+            bash docker/android-parity.sh
+
+      # CI parity (check.yml validate-android): aarch64 clippy. The bindgen
+      # target pin (API 30) comes from the image ENV block.
+      - name: Android (ARM64) Clippy
+        run: |
+          set -eu
+          docker run --rm \
+            --volume "$PWD:/workspace" \
+            snifferengine-dev:ci \
+            cargo ndk --target aarch64-linux-android clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Android (Emulator x86_64) Clippy
+        run: |
+          set -eu
+          docker run --rm \
+            --volume "$PWD:/workspace" \
+            snifferengine-dev:ci \
+            cargo ndk --target x86_64-linux-android clippy --locked --workspace --all-targets -- -D warnings
+
+  # ------------------------------------------------------------------------------
+  # drift-tracker (vault plan 0002 — stage 3.5): the patch-freshness.yml
+  # lifecycle, adapted to the push-only trigger policy. Every-commit push
+  # runs already gate the author directly, so the labeled tracking issue
+  # fires ONLY on scheduled/manual runs: a red run opens or comments the
+  # `docker-environment-drift` issue, and the next green run closes it.
+  # ------------------------------------------------------------------------------
+  drift-tracker:
+    name: Docker Environment Drift Tracker
+    runs-on: ubuntu-latest
+    needs: [validate-gates, validate-android]
+    if: always() && github.event_name != 'push'
+    # Scoped grant (the workflow-level default stays contents: read): this
+    # job never checks out code, it only talks to the issue tracker.
+    permissions:
+      issues: write
+    steps:
+      - name: Consolidate Validation Results
+        id: results
+        run: |
+          set -eu
+          GATES="${{ needs.validate-gates.result }}"
+          ANDROID="${{ needs.validate-android.result }}"
+          echo "validate-gates=${GATES} validate-android=${ANDROID}"
+          if [ "${GATES}" = "success" ] && [ "${ANDROID}" = "success" ]; then
+            echo "status=green" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=red" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or Update Tracking Issue
+        if: steps.results.outputs.status == 'red'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          # Ensure the tracker label exists (idempotent).
+          gh api --method POST "repos/${{ github.repository }}/labels" \
+            -f name="docker-environment-drift" \
+            -f color="BFD4F2" \
+            -f description="The Docker development environment needs attention" \
+            --silent > /dev/null 2>&1 || true
+          printf '%s\n' \
+            "The scheduled Docker environment validation failed: the container no longer satisfies the repository quality gates or the Android parity contract." \
+            "" \
+            "- Failing run: ${RUN_URL}" \
+            "- Likely attention points: docker/Dockerfile pins, docker-compose.yml, or upstream digest drift" \
+            "- Local reproduction: docker compose build && docker compose run --rm dev ./scripts/check.sh" \
+            > /tmp/tracker-issue-body.md
+          OPEN_ISSUES=$(gh issue list --label "docker-environment-drift" --state open --json number --jq '.[].number')
+          if [ -z "$OPEN_ISSUES" ]; then
+            gh issue create \
+              --title "Docker development environment validation is failing" \
+              --body-file /tmp/tracker-issue-body.md \
+              --label "docker-environment-drift"
+          else
+            for issue in $OPEN_ISSUES; do
+              gh issue comment "$issue" --body "Scheduled validation is still failing: ${RUN_URL}"
+            done
+          fi
+
+      - name: Close Resolved Tracking Issue
+        if: steps.results.outputs.status == 'green'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          OPEN_ISSUES=$(gh issue list --label "docker-environment-drift" --state open --json number --jq '.[].number')
+          for issue in $OPEN_ISSUES; do
+            gh issue close "$issue" --comment "Validation is green again: ${RUN_URL}"
+          done
