@@ -9,10 +9,27 @@
 #     channel is never duplicated into the image (parity by construction)
 #
 # Layer ordering strategy (least-frequently-changing first, so bumps rebuild
-# as little as possible):
-#   1. base        pinned Debian + apt system libraries      (stage 1.3)
-#   2. toolchain   rustup + toml-driven toolchain + targets   (stage 1.4)
-#   3. dev         entrypoint wiring + (later) Android SDK   (stages 1.5, 2.x)
+# as little as possible — vault plan 0002 stage 2.4):
+#   1. base       pinned Debian + apt system closure      (stage 1.3)
+#   2. toolchain  rustup + toml-driven toolchain + targets (stage 1.4)
+#   3. android    JDK + cmdline-tools + SDK/NDK composition (stage 2.1)
+#   4. dev        entrypoint wiring                        (stage 1.5)
+# The android stage sits deliberately AFTER toolchain: SDK/NDK version
+# bumps invalidate only the android and dev layers, never the apt or
+# toolchain layers below.
+#
+# Layer size budget (stage 2.4 — expectations; the CI step summary records
+# the live size on every run and the first live measurement tightens these
+# ranges):
+#   base (trixie + 29 packages)           ~   350–450 MB
+#   toolchain (rustup + 1.98.0 + tools) ~ 1.0–1.3 GB
+#   android (JDK 21 + SDK + NDK)         ~ 2.5–3.0 GB
+#   dev (entrypoint wiring)              negligible
+#   total dev image                      ~ 4–5 GB
+# A slimmer CI-only variant is DEFERRED indefinitely: ADR 002 refused the
+# registry publication, which removes the only consumer a slim variant would
+# serve — the gha layer cache already makes runner rebuilds incremental.
+# Revisit together with ADR 002's registry triggers if they ever fire.
 #
 # BuildKit decisions (stage 1.2):
 #   • cache mounts (RUN --mount=type=cache) are used for apt and cargo
