@@ -1,0 +1,78 @@
+# ==============================================================================
+# SnifferEngine Docker Environment Validation (vault plan 0002 — Section 3)
+# ==============================================================================
+# Standalone by design (plan rule 7): this workflow owns ALL Docker
+# validation with its own inline path filters. The consolidated check.yml
+# and .github/paths.yaml are never modified, and Docker-relevant changes
+# never trigger or block the consolidated quality workflow.
+#
+# Lifecycle (house pattern, patch-freshness.yml):
+#   • push/PR runs (paths-filtered) gate the author's own docker changes —
+#     always blocking.
+#   • scheduled runs are strict; a failing scheduled run opens or updates a
+#     labeled tracking issue that stays open until a green run closes it
+#     (wired in stages 3.5/3.6).
+#
+# Stage markers follow vault plan 0002: this skeleton (3.1) carries the
+# trigger/permission contract and a file-set smoke; stages 3.2-3.6 replace
+# the smoke with the real image build, the gate runs, and drift tracking.
+# ==============================================================================
+
+name: SnifferEngine Docker Environment Validation
+
+on:
+  push:
+    branches: ["master"]
+    paths:
+      - "docker/**"
+      - "docker-compose.yml"
+      - ".dockerignore"
+      - "rust-toolchain.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/check.sh"
+      - ".github/workflows/docker.yml"
+  pull_request:
+    branches: ["master"]
+    paths:
+      - "docker/**"
+      - "docker-compose.yml"
+      - ".dockerignore"
+      - "rust-toolchain.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/check.sh"
+      - ".github/workflows/docker.yml"
+  workflow_dispatch:
+  schedule:
+    # Thursday 06:37 UTC — offset minute avoids the top-of-hour API spike
+    # (house pattern: patch-freshness.yml).
+    - cron: "37 6 * * 4"
+
+permissions:
+  contents: read
+  # issues: write is granted from stage 3.5, scoped to the drift-tracking
+  # job — the skeleton needs nothing beyond read access.
+
+jobs:
+  skeleton:
+    name: Docker File-Set Smoke (Stage 3.1)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify Docker Environment File Set
+        run: |
+          set -eu
+          MISSING=0
+          for f in docker/Dockerfile docker/entrypoint.sh docker-compose.yml .dockerignore rust-toolchain.toml; do
+            if [ ! -f "$f" ]; then
+              echo "::error::expected docker environment file is missing: $f"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -ne 0 ]; then
+            exit 1
+          fi
+          echo "docker environment file set present (trigger: ${{ github.event_name }})"
