@@ -1,0 +1,89 @@
+name: SnifferEngine Nix Environment Validation
+
+# ==============================================================================
+# Standalone continuous validation of the Nix-managed development
+# environment (vault plan 0001, section 3; ADR 001).
+#
+# This workflow owns its inline path filters and shares nothing with the
+# consolidated quality workflow: no .github/paths.yaml category is added
+# and check.yml is never modified by the Nix work. A Nix change validates
+# here on its own; unrelated changes never trigger it.
+#
+# Trigger semantics (vault plan stage 3.6 will complete the story):
+#   * push/PR on the nix surface — blocking validation of author changes
+#   * workflow_dispatch — on-demand proof
+#   * weekly schedule — drift detection against a moving runner world;
+#     failures on scheduled runs will open a labeled tracking issue that
+#     stays open until a green run closes it
+# ==============================================================================
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "nix/**"
+      - "shell.nix"
+      - "rust-toolchain.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/check.sh"
+      - "scripts/update-nix-pins.sh"
+      - ".github/workflows/nix.yml"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "nix/**"
+      - "shell.nix"
+      - "rust-toolchain.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/check.sh"
+      - "scripts/update-nix-pins.sh"
+      - ".github/workflows/nix.yml"
+  workflow_dispatch:
+  schedule:
+    # Wednesday 06:23 UTC — offset minute avoids the top-of-hour API spike
+    # (house pattern: patch-freshness.yml runs Monday 06:17).
+    - cron: "23 6 * * 3"
+
+permissions:
+  contents: read
+  # Used only by the scheduled drift-tracking job (vault plan stage 3.6).
+  issues: write
+
+jobs:
+  skeleton:
+    name: Workflow Skeleton & Nix Surface Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Assert the Nix Surface Exists
+        run: |
+          missing=0
+          for f in \
+            shell.nix \
+            nix/pins.nix \
+            nix/rust.nix \
+            nix/host-deps.nix \
+            nix/shell-hook.nix \
+            scripts/update-nix-pins.sh \
+            scripts/check.sh; do
+            if [ ! -f "$f" ]; then
+              echo "::error file=$f::missing nix surface file"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::the guarded nix surface is incomplete"
+            exit 1
+          fi
+          echo "Nix surface present: 5 nix modules + 2 guarded scripts"
+
+      - name: Print Trigger Context
+        run: |
+          echo "event   : ${{ github.event_name }}"
+          echo "ref     : ${{ github.ref }}"
+          echo "schedule: 23 6 * * 3 (weekly, Wednesday 06:23 UTC)"
+          echo "purpose : continuously prove the pinned nix environment"
