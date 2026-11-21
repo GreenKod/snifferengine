@@ -21,6 +21,7 @@ fn test_quad_instance_gradient_border_data() {
         shadow_blur: 0.0,
         is_gradient: 1.0,
         border_color_bottom: b_bot,
+        transform: sniffer_render::glow::batching::IDENTITY_TRANSFORM,
     };
 
     assert_eq!(inst.border_width, 2.0);
@@ -49,6 +50,7 @@ fn test_batch_gradient_borders_alongside_solid_borders() {
             shadow_blur: 0.0,
             is_gradient: 1.0,
             border_color_bottom: [0.0, 0.0, 1.0, 1.0],
+            transform: sniffer_render::glow::batching::IDENTITY_TRANSFORM,
         };
         assert!(batch.push_instance(inst));
     }
@@ -69,6 +71,7 @@ fn test_batch_gradient_borders_alongside_solid_borders() {
             shadow_blur: 0.0,
             is_gradient: 0.0,
             border_color_bottom: [0.0, 1.0, 0.0, 1.0],
+            transform: sniffer_render::glow::batching::IDENTITY_TRANSFORM,
         };
         assert!(batch.push_instance(inst));
     }

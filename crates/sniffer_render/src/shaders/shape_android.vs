@@ -8,6 +8,7 @@ layout(location = 4) in vec4 a_color_bottom; // bottom gradient color
 layout(location = 5) in vec4 a_shape_info;   // shape_size.xy, is_circle, is_shadow
 layout(location = 6) in vec4 a_params;       // radius, border_width, shadow_blur, is_gradient
 layout(location = 7) in vec4 a_border_color_bottom; // bottom border color
+layout(location = 8) in vec4 a_transform;    // scale, rotation deg, pivot xy
 
 out vec2 v_local_pos;
 out vec4 v_color;
@@ -46,12 +47,25 @@ uniform vec4 u_color_bottom;
 void main() {
     vec2 rect_pos = (u_instanced == 1) ? a_bounds.xy : u_rect_pos;
     vec2 rect_size = (u_instanced == 1) ? a_bounds.zw : u_rect_size;
-    
-    vec3 pixel_pos_3 = u_transform * vec3(position * rect_size + rect_pos, 1.0);
+
+    // The fragment-space varyings stay in raw local coordinates; the
+    // per-instance transform applies to geometry only.
+    v_local_pos = position * rect_size;
+
+    // Per-instance transform: scale, rotation (degrees), pivot in
+    // rect-local pixels. Identity (1, 0, 0, 0) is an exact no-op, so
+    // producers that have not moved to instanced transforms render
+    // bit-identically to the pre-attribute pipeline.
+    highp vec2 delta = v_local_pos - a_transform.zw;
+    highp float angle = radians(a_transform.y);
+    highp vec2 scaled_rotated = mat2(cos(angle), sin(angle), -sin(angle), cos(angle))
+        * (delta * a_transform.x);
+    highp vec2 transformed_local = a_transform.zw + scaled_rotated;
+
+    vec3 pixel_pos_3 = u_transform * vec3(transformed_local + rect_pos, 1.0);
     vec2 pixel_pos = pixel_pos_3.xy;
     v_screen_pos = pixel_pos;
-    v_local_pos = position * rect_size;
-    
+
     v_color = (u_instanced == 1) ? a_color : u_color;
     v_border_color = (u_instanced == 1) ? a_border_color : u_border_color;
     v_border_color_bottom = (u_instanced == 1) ? a_border_color_bottom : u_border_color_bottom;

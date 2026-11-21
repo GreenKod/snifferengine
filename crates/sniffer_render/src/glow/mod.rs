@@ -155,6 +155,11 @@ impl GlowRenderer {
             gl.vertex_attrib_pointer_f32(7, 4, glow::FLOAT, false, stride, 96);
             gl.vertex_attrib_divisor(7, 1);
 
+            // Per-instance transform: (scale, rotation deg, pivot xy).
+            gl.enable_vertex_attrib_array(8);
+            gl.vertex_attrib_pointer_f32(8, 4, glow::FLOAT, false, stride, 112);
+            gl.vertex_attrib_divisor(8, 1);
+
             let image_instance_vao = gl.create_vertex_array()?;
             gl.bind_vertex_array(Some(image_instance_vao));
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(quad_vertex_buffer));
@@ -178,6 +183,11 @@ impl GlowRenderer {
             gl.enable_vertex_attrib_array(3);
             gl.vertex_attrib_pointer_f32(3, 4, glow::FLOAT, false, img_stride, 32);
             gl.vertex_attrib_divisor(3, 1);
+
+            // Per-instance transform: (scale, rotation deg, pivot xy).
+            gl.enable_vertex_attrib_array(4);
+            gl.vertex_attrib_pointer_f32(4, 4, glow::FLOAT, false, img_stride, 48);
+            gl.vertex_attrib_divisor(4, 1);
 
             gl.bind_vertex_array(Some(quad_vertex_array));
 
