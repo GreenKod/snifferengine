@@ -220,3 +220,34 @@ jobs:
             echo "::endgroup::"
             echo "validate-android: pinned NDK cross-compile smoke PASSED"
           '
+
+  # ------------------------------------------------------------------
+  # Stage 3.4 — The full local quality gate inside the pure pinned
+  # shell: scripts/check.sh's 8 steps (purity, fmt, JS syntax, cargo
+  # check, clippy, tests, machete, patched-crate freshness). This is
+  # the proof that the Nix environment is a complete drop-in for
+  # local development — the cancelled stage 1.6 gate, delivered by
+  # CI as decided.
+  # ------------------------------------------------------------------
+  validate-gates:
+    name: Validate Gates (full scripts/check.sh, pure shell)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - name: Restore Nix Download Cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/nix
+          key: nix-downloads-v1-${{ hashFiles('nix/pins.nix') }}
+          restore-keys: nix-downloads-v1-
+
+      # scripts/check.sh carries its own [1/8]…[8/8] stage output and
+      # fails the step on the first broken gate.
+      - name: Run the Full Quality Gate Inside the Pure Pinned Shell
+        run: |
+          nix-shell --pure --run 'bash scripts/check.sh'
