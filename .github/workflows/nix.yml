@@ -131,3 +131,48 @@ jobs:
             fi
             echo "$pin rev evaluates to ${eval_rev:0:12}… (file and eval agree)"
           done
+
+  # ------------------------------------------------------------------
+  # Stage 3.3 — Fast smoke proof of the pinned environment: entering
+  # the pure shell runs the hard toolchain parity assertion (the shell
+  # hook exits 1 on mismatch), then the workspace compiles and the
+  # framework JS parses — all against the pinned dependency closure.
+  # ------------------------------------------------------------------
+  validate-shell:
+    name: Validate Shell (parity + cargo check + framework JS)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - name: Restore Nix Download Cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/nix
+          key: nix-downloads-v1-${{ hashFiles('nix/pins.nix') }}
+          restore-keys: nix-downloads-v1-
+
+      # One invocation builds the shell derivation once; the shell hook
+      # performs the toolchain parity assertion during entry (exit 1 on
+      # mismatch fails this step), then the smoke set runs inside the
+      # pure environment.
+      - name: Validate Inside the Pure Pinned Shell
+        run: |
+          nix-shell --pure --run '
+            set -euo pipefail
+            echo "::group::Toolchain (parity asserted by the shell hook on entry)"
+            rustc --version
+            cargo --version
+            echo "::endgroup::"
+            echo "::group::cargo check --locked --workspace"
+            cargo check --locked --workspace
+            echo "::endgroup::"
+            echo "::group::Framework JS syntax (scripts/check.sh step 3)"
+            node --check framework/core.js
+            node --check framework/sniffer_ui.js
+            echo "::endgroup::"
+            echo "validate-shell: pinned environment smoke PASSED"
+          '
