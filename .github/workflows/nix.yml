@@ -16,6 +16,16 @@ name: SnifferEngine Nix Environment Validation
 #   * weekly schedule — drift detection against a moving runner world;
 #     failures on scheduled/dispatch runs open a labeled tracking issue
 #     (nix-environment-drift) that stays open until a green run closes it
+#
+# Promotion policy (vault plan stage 3.7, decided 2026-11-21):
+#   This workflow stays ADVISORY — it is not a required branch check yet.
+#   The promotion itself is a repository settings change (Settings →
+#   Branches → required status checks), not a file change. Revisit the
+#   decision only after the first four consecutive green weekly scheduled
+#   runs have landed (first fire 2026-11-25 → earliest review ≈
+#   2026-12-16); a scheduled failure resets the count, and the open
+#   nix-environment-drift issue explains why. Until then, pushes and PRs
+#   still show this workflow red/green for their own nix changes.
 # ==============================================================================
 
 on:
