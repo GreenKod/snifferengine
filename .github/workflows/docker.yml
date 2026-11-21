@@ -16,7 +16,8 @@
 # no new action supply-chain surface, explicit BuildKit cache semantics),
 # the entrypoint parity smoke, the full in-container gate run, the Android
 # validation, and the digest/size record; stage 3.5 adds the scheduled
-# drift-tracking issue lifecycle; stage 3.6 adds digest drift detection.
+# drift-tracking issue lifecycle; stage 3.6 adds base-image digest drift
+# detection; stage 3.7 keeps the promotion and registry decisions open.
 # ==============================================================================
 
 name: SnifferEngine Docker Environment Validation
@@ -241,4 +242,101 @@ jobs:
           OPEN_ISSUES=$(gh issue list --label "docker-environment-drift" --state open --json number --jq '.[].number')
           for issue in $OPEN_ISSUES; do
             gh issue close "$issue" --comment "Validation is green again: ${RUN_URL}"
+          done
+
+  # ------------------------------------------------------------------------------
+  # digest-drift (vault plan 0002 — stage 3.6): compares the pinned base image
+  # digest in docker/Dockerfile against the live Docker Hub tag. Runs on every
+  # event (one curl, non-fatal by design): upstream movement becomes visible
+  # the moment the repository is touched, not only on the weekly schedule.
+  # Three tiers: a missing pin is a hard failure (the pin rule); a Hub outage
+  # is a soft warning with no issue churn; a real drift opens or updates a
+  # labeled issue and never blocks the run. A fresh comparison closes open
+  # drift issues again.
+  # ------------------------------------------------------------------------------
+  digest-drift:
+    name: Base Image Pin Freshness
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Compare Pinned Base Digest With Docker Hub
+        id: drift
+        run: |
+          set -eu
+          PINNED="$(grep -m1 -o 'FROM debian:trixie-slim@sha256:[0-9a-f]*' docker/Dockerfile | cut -d'@' -f2)"
+          if [ -z "$PINNED" ]; then
+            echo "::error::no digest-pinned FROM line found in docker/Dockerfile — the pin rule is non-negotiable"
+            exit 1
+          fi
+          CURRENT="$(curl -fsSL --max-time 30 \
+            https://hub.docker.com/v2/repositories/library/debian/tags/trixie-slim \
+            | jq -r '.digest' || true)"
+          if [ -z "$CURRENT" ]; then
+            echo "::warning title=Docker Hub unreachable::cannot compare the pinned base digest this run"
+            echo "drifted=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "pinned:   ${PINNED}"
+          echo "upstream: ${CURRENT}"
+          {
+            echo "pinned=${PINNED}"
+            echo "current=${CURRENT}"
+          } >> "$GITHUB_OUTPUT"
+          if [ "${PINNED}" = "${CURRENT}" ]; then
+            echo "drifted=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drifted=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or Update Digest Drift Issue
+        if: steps.drift.outputs.drifted == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PINNED_DIGEST: ${{ steps.drift.outputs.pinned }}
+          CURRENT_DIGEST: ${{ steps.drift.outputs.current }}
+        run: |
+          set -eu
+          echo "::warning title=Base image digest drift::debian:trixie-slim moved upstream — see the docker-digest-drift issue"
+          gh api --method POST "repos/${{ github.repository }}/labels" \
+            -f name="docker-digest-drift" \
+            -f color="BFD4F2" \
+            -f description="The pinned base image digest is behind upstream" \
+            --silent > /dev/null 2>&1 || true
+          printf '%s\n' \
+            "The pinned base image digest no longer matches the live Docker Hub tag:" \
+            "" \
+            "- pinned:   ${PINNED_DIGEST}" \
+            "- current: ${CURRENT_DIGEST}" \
+            "- run: ${RUN_URL}" \
+            "" \
+            "Update procedure: bump the FROM digest in docker/Dockerfile (the pin-update helper lands with vault plan 0002 stage 4.2) and re-run the validation." \
+            > /tmp/digest-drift-body.md
+          OPEN_ISSUES=$(gh issue list --label "docker-digest-drift" --state open --json number --jq '.[].number')
+          if [ -z "$OPEN_ISSUES" ]; then
+            gh issue create \
+              --title "Pinned base image digest is behind upstream" \
+              --body-file /tmp/digest-drift-body.md \
+              --label "docker-digest-drift"
+          else
+            for issue in $OPEN_ISSUES; do
+              gh issue comment "$issue" --body "Digest is still behind upstream: ${RUN_URL}"
+            done
+          fi
+
+      - name: Close Resolved Digest Drift Issue
+        if: steps.drift.outputs.drifted == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          OPEN_ISSUES=$(gh issue list --label "docker-digest-drift" --state open --json number --jq '.[].number')
+          for issue in $OPEN_ISSUES; do
+            gh issue close "$issue" --comment "Pinned digest matches upstream again: ${RUN_URL}"
           done
