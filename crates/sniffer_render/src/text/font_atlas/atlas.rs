@@ -2,12 +2,16 @@ use super::discovery::discover_system_fonts;
 use super::rasterizer::{GlyphData, render_character};
 use super::upload::{update_font_texture_sub, upload_font_texture};
 use crate::{dev_err, dev_log};
+use glow::HasContext;
 use obfstr::obfstr;
 use std::collections::HashMap;
 use swash::FontRef;
 
 const PADDING: u32 = 4;
 const DEFAULT_ATLAS_DIM: u32 = 1024;
+/// Maximum atlas height on GLES 3.0+ (guaranteed minimum is 2048; virtually
+/// all Android and desktop GPUs support 4096).
+const MAX_ATLAS_HEIGHT: u32 = 4096;
 
 #[derive(Clone, Debug)]
 pub struct GlyphInfo {
@@ -146,6 +150,30 @@ impl FontAtlas {
         }
     }
 
+    /// Grows the atlas vertically by re-uploading the existing pixel data
+    /// to a new, taller GPU texture. Existing glyphs stay at their pixel
+    /// positions — the shelf packing continues in the newly allocated
+    /// space below.
+    fn grow_atlas_height(
+        &mut self,
+        gl: &glow::Context,
+        atlas_w: u32,
+        new_height: u32,
+    ) -> Result<(), String> {
+        let new_len = (atlas_w * new_height * 4) as usize;
+        self.atlas_pixels.resize(new_len, 0);
+
+        let new_texture = upload_font_texture(gl, atlas_w, new_height, &self.atlas_pixels)?;
+
+        unsafe {
+            gl.delete_texture(self.texture);
+        }
+
+        self.texture = new_texture;
+        self.atlas_height = i32::try_from(new_height).expect("atlas height fits in i32");
+        Ok(())
+    }
+
     /// Ensures that all glyphs in `text` are rasterized and uploaded to the GPU texture atlas.
     pub fn ensure_glyphs(&mut self, gl: &glow::Context, text: &str) {
         for c in text.chars() {
@@ -212,12 +240,28 @@ impl FontAtlas {
             self.shelf_height = 0;
         }
 
+        // Dynamic capacity: grow the atlas vertically instead of dropping
+        // the glyph. Existing glyph positions stay valid — the shelf
+        // packing simply continues in the new space below.
         if self.shelf_y + gh + PADDING > atlas_h {
-            dev_err!(
-                "[FontAtlas] Warning: Atlas texture is full, cannot pack '{}'",
-                character
-            );
-            return None;
+            let new_h = atlas_h.saturating_mul(2).min(MAX_ATLAS_HEIGHT);
+            if new_h > atlas_h && self.grow_atlas_height(gl, atlas_w, new_h).is_ok() {
+                dev_log!(
+                    "[FontAtlas] Grew atlas to {}x{} to fit '{}'",
+                    atlas_w,
+                    new_h,
+                    character
+                );
+            } else {
+                dev_err!(
+                    "[FontAtlas] Atlas is full ({}x{}, max {}px) and cannot grow further; dropping '{}'",
+                    atlas_w,
+                    atlas_h,
+                    MAX_ATLAS_HEIGHT,
+                    character
+                );
+                return None;
+            }
         }
 
         let dst_x = self.shelf_x;
