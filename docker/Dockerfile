@@ -118,6 +118,12 @@ RUN --mount=type=cache,target=/usr/local/rustup/downloads \
       i686-linux-android \
       x86_64-linux-android
 
+# Record the image's toolchain for the entrypoint's runtime parity assertion
+# (stage 1.5): written under the toml context, so it captures exactly what
+# this image ships. RUSTUP_HOME is image-internal (never volume-mounted in
+# docker-compose.yml), so the record cannot drift.
+RUN rustc --version | awk '{print $2}' > /usr/local/rustup/image-toolchain-version
+
 # scripts/check.sh runtime tools: explicitly pinned crate versions
 # (crates.io, 2026-11-21). Neither crate ships a Cargo.lock, so --locked is
 # impossible; free transitive resolution is the accepted trade-off for
@@ -136,10 +142,19 @@ FROM toolchain AS dev
 
 WORKDIR /workspace
 
-# Stage 1.5 replaces the entrypoint stub with the real contract: the hard
-# toolchain parity assertion against rust-toolchain.toml and the environment
-# exports (LIBCLANG_PATH, BINDGEN_EXTRA_CLANG_ARGS_*, PKG_CONFIG_PATH, …).
-# Section 2 (plan 0002) extends this stage with the pinned Android SDK/NDK.
+# Runtime parity contract (stage 1.5): forbid rustup from auto-installing a
+# toolchain the image does not ship — the only way to change the toolchain
+# is to change rust-toolchain.toml and rebuild the image. The entrypoint
+# then asserts toml == image record == active rustc on every start.
+ENV RUSTUP_AUTO_INSTALL=0
+
+# The repository arrives via a bind mount owned by the host user; without
+# this, git refuses to operate inside /workspace ("dubious ownership").
+RUN git config --global --add safe.directory /workspace
+
+# The entrypoint (docker/entrypoint.sh) asserts three-way toolchain parity
+# and exports the container environment before handing over. Section 2
+# (plan 0002) extends this stage with the pinned Android SDK/NDK.
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
