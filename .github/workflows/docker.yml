@@ -11,11 +11,12 @@
 # in-container gate run (stage 3.3) proves the whole repository against
 # the container environment, so any commit can break it.
 #
-# Stage markers follow vault plan 0002: stage 3.2 carries the image build
-# (raw docker buildx steps — decided over a third-party build action: no new
-# action supply-chain surface, explicit BuildKit cache semantics), the
-# entrypoint parity smoke, and the digest/size record; stages 3.3-3.6 add the
-# full gate runs and drift tracking on top.
+# Stage markers follow vault plan 0002: stages 3.2-3.3 carry the image
+# build (raw docker buildx steps — decided over a third-party build action:
+# no new action supply-chain surface, explicit BuildKit cache semantics),
+# the entrypoint parity smoke, the full in-container gate run, and the
+# digest/size record; stages 3.4-3.6 add Android validation and drift
+# tracking on top.
 # ==============================================================================
 
 name: SnifferEngine Docker Environment Validation
@@ -40,9 +41,13 @@ permissions:
   # job — the skeleton needs nothing beyond read access.
 
 jobs:
-  build:
-    name: Build Dev Image
+  validate-gates:
+    name: Build Image and Validate Quality Gates
     runs-on: ubuntu-latest
+    # A full in-container workspace compile takes tens of minutes on a cold
+    # cache; 60 minutes bounds the job against hung runs without cutting
+    # legitimate builds short.
+    timeout-minutes: 60
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,6 +79,21 @@ jobs:
             --volume "$PWD:/workspace" \
             snifferengine-dev:ci \
             true
+
+      # The full 8-gate proof (plan stage 3.3): scripts/check.sh runs INSIDE
+      # the freshly built image against the checked-out repository — the
+      # container must be a complete drop-in for local development. The
+      # entrypoint's three-way parity assertion runs first (defense in
+      # depth), then the gates execute in /workspace. Invoked through bash
+      # because scripts/check.sh carries no executable bit in git (same
+      # convention as the consolidated check.yml).
+      - name: Validate Quality Gates (in-container scripts/check.sh)
+        run: |
+          set -eu
+          docker run --rm \
+            --volume "$PWD:/workspace" \
+            snifferengine-dev:ci \
+            bash ./scripts/check.sh
 
       # Fulfills plan stage 1.6's deferred "digest recorded" evidence and
       # gives reviewers an immediate size signal.
