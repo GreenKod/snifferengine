@@ -126,6 +126,9 @@ fn sync_ui_tree_and_virtualization(
             *root_element = new_root;
             state.layout.cached_root_element = Arc::new(root_element.clone());
             state.layout.layout_dirty = true;
+            // The plugin emitted a fresh, fully materialized tree; any
+            // scroll-culling window state is stale by definition.
+            state.layout.virtual_page_manager.reset_scroll_culling();
         }
     }
     #[cfg(feature = "devkit")]
@@ -229,6 +232,20 @@ fn calculate_and_sync_layout(
             &fresh,
             &mut state.physics.scroll_physics,
         );
+        // Window long scroll content around the live position. Stubs
+        // preserve every measured size, so the freshly computed layout
+        // above stays geometrically valid — no re-layout is needed here.
+        let scroll_offsets: std::collections::HashMap<u64, (f32, f32)> = state
+            .physics
+            .scroll_physics
+            .iter()
+            .map(|(id, phys)| (*id, (phys.pos_x, phys.pos_y)))
+            .collect();
+        state.layout.virtual_page_manager.refresh_scroll_windows(
+            root_element,
+            &fresh,
+            &scroll_offsets,
+        );
         state.layout.cached_layout = Some(fresh.clone());
         state.layout.layout_dirty = false;
         #[cfg(feature = "devkit")]
@@ -298,6 +315,21 @@ fn step_physics_and_kinetics(
             let moved = phys.tick(dt);
             if moved || phys.is_dragging {
                 physics_active = true;
+
+                // Keep the materialized window centered on the live scroll
+                // position. A changed window re-layouts through the reduced
+                // tree, so the cost stays proportional to the visible range.
+                if let Some(ref cached_layout) = state.layout.cached_layout {
+                    let window_changed = state.layout.virtual_page_manager.update_scroll_window(
+                        sv_id,
+                        (phys.pos_x, phys.pos_y),
+                        root_element,
+                        cached_layout,
+                    );
+                    if window_changed {
+                        state.layout.layout_dirty = true;
+                    }
+                }
             }
 
             if let Some(snap_width) = phys.snap_x {

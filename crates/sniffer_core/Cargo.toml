@@ -15,5 +15,12 @@ taffy = "0.5"
 obfstr = "0.4"
 swash = { version = "0.2.9", features = ["scale"] }
 
+[dev-dependencies]
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "frame_pipeline"
+harness = false
+
 [lints]
 workspace = true
