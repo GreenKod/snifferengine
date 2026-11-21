@@ -62,6 +62,11 @@ pub struct GlowRenderer {
     pub(crate) glass_program: glow::Program,
     #[allow(dead_code)]
     pub(crate) cached_blur_texture: Option<glow::Texture>,
+    /// Pre-blurred wallpaper texture for Android's frosted-glass backdrop
+    /// blur. Blurred once at wallpaper load time; per-frame draws are just
+    /// a texture bind through the glass shader — zero blit, zero Kawase
+    /// passes, zero batch-breaking captures on TBDR mobile GPUs.
+    pub(crate) blurred_wallpaper_texture: Option<glow::Texture>,
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -401,6 +406,7 @@ impl GlowRenderer {
                 blur_program,
                 glass_program,
                 cached_blur_texture: None,
+                blurred_wallpaper_texture: None,
             })
         }
     }

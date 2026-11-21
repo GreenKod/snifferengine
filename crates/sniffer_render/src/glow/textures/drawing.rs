@@ -240,8 +240,75 @@ impl GlowRenderer {
                     .total_vram_bytes
                     .saturating_sub(removed.size_bytes);
             }
+            // Drop the stale pre-blurred texture so the next backdrop blur
+            // regenerates it from the fresh wallpaper.
+            if let Some(old) = self.blurred_wallpaper_texture.take() {
+                self.gl.delete_texture(old);
+            }
         }
         self.load_image_impl("__system_wallpaper__", rgba_pixels, width, height);
+    }
+
+    /// Generates the pre-blurred wallpaper texture used by Android's
+    /// frosted-glass backdrop blur.
+    ///
+    /// The wallpaper is rendered once into a small ping-pong FBO pair
+    /// (capped at 360px on the longest axis) and blurred with two Kawase
+    /// passes. Per-frame `draw_backdrop_blur` calls then just bind the
+    /// cached texture through the glass shader — zero blit, zero per-frame
+    /// blur passes, zero batch-breaking captures on TBDR mobile GPUs.
+    #[cfg(target_os = "android")]
+    pub(crate) fn pre_blur_wallpaper_impl(&mut self) {
+        let Some(handle) = self.texture_cache.get_mut("__system_wallpaper__") else {
+            return;
+        };
+        let wallpaper_tex = handle.texture;
+        let wp_w = handle.width.max(1.0) as i32;
+        let wp_h = handle.height.max(1.0) as i32;
+
+        // Small FBO pair (capped at 360px — the Android blur pipeline cap).
+        let scale = (360.0_f32 / wp_w.max(wp_h) as f32).min(1.0);
+        let blur_w = ((wp_w as f32) * scale).max(1.0) as i32;
+        let blur_h = ((wp_h as f32) * scale).max(1.0) as i32;
+
+        if self.ensure_blur_pipeline(blur_w, blur_h, 1.0).is_err() {
+            return;
+        }
+
+        let Some(ref pipeline) = self.blur_pipeline else {
+            return;
+        };
+
+        unsafe {
+            // Render the wallpaper into fbo_a at the small resolution (the
+            // first Kawase pass doubles as a downsample).
+            pipeline.render_kawase_pass(
+                &self.gl,
+                self.quad_vertex_array,
+                self.blur_program,
+                &self.blur_uniforms,
+                wallpaper_tex,
+                pipeline.fbo_for(crate::glow::blur::PingPongTarget::A),
+                1.0 / (blur_w as f32),
+                1.0 / (blur_h as f32),
+            );
+
+            // Two more Kawase passes for a soft frosted-glass blur.
+            let blurred = pipeline.execute_kawase_blur(
+                &self.gl,
+                self.quad_vertex_array,
+                self.blur_program,
+                &self.blur_uniforms,
+                2,
+                32.0,
+            );
+
+            // Unbind the FBO before returning to the main render loop.
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            self.gl.viewport(0, 0, wp_w.max(blur_w), wp_h.max(blur_h));
+
+            self.blurred_wallpaper_texture = Some(blurred);
+        }
     }
 
     pub(crate) fn draw_wallpaper_impl(&mut self, width: f32, height: f32) {
@@ -320,7 +387,7 @@ impl GlowRenderer {
                     radius,
                     alpha: self.global_alpha,
                     pad: [0.0, 0.0],
-                    transform: crate::glow::batching::IDENTITY_TRANSFORM,
+                    transform: self.current_instance_transform(&draw_rect),
                 };
 
                 if self.image_batch.is_full() {
