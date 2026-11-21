@@ -169,7 +169,16 @@ in
   export OPENSSL_LIB_DIR="${pkgs.openssl.out}/lib"
   export OPENSSL_INCLUDE_DIR="${pkgs.openssl.dev}/include"
 
-  _gh_ok "LIBCLANG_PATH, BINDGEN args, PKG_CONFIG_PATH, LD_LIBRARY_PATH, OPENSSL_*"
+  # TLS roots: the pinned closure's openssl has no system bundle, so the
+  # upstream HTTPS lookups of the freshness tracker (scripts/check.sh
+  # step 8) would degrade to warnings inside the pure shell — the gate
+  # passes without actually checking upstreams. Pin the CA bundle so
+  # python (urllib), git and curl all verify against the same roots.
+  export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+  export CURL_CA_BUNDLE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+  export GIT_SSL_CAINFO="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+
+  _gh_ok "LIBCLANG_PATH, BINDGEN args, PKG_CONFIG_PATH, LD_LIBRARY_PATH, OPENSSL_*, TLS roots"
   _gh_endgroup
 ${androidSection}
   # -- Step 3 — Quick commands --------------------------------------------------

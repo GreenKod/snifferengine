@@ -27,6 +27,7 @@
 
   # -- System libraries --------------------------------------------------------
   pkgs.openssl # apt: libssl-dev
+  pkgs.cacert # TLS roots — SSL_CERT_FILE etc. exported by nix/shell-hook.nix
   pkgs.zlib
 
   # -- Build tooling (apt: build-essential, cmake; bindgen backend) -------------
