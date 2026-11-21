@@ -2,16 +2,14 @@
 # SnifferEngine Docker Environment Validation (vault plan 0002 — Section 3)
 # ==============================================================================
 # Standalone by design (plan rule 7): this workflow owns ALL Docker
-# validation with its own inline path filters. The consolidated check.yml
-# and .github/paths.yaml are never modified, and Docker-relevant changes
-# never trigger or block the consolidated quality workflow.
+# validation with its own triggers. The consolidated check.yml and
+# .github/paths.yaml are never modified, and this workflow never triggers
+# or blocks the consolidated quality workflow.
 #
-# Lifecycle (house pattern, patch-freshness.yml):
-#   • push/PR runs (paths-filtered) gate the author's own docker changes —
-#     always blocking.
-#   • scheduled runs are strict; a failing scheduled run opens or updates a
-#     labeled tracking issue that stays open until a green run closes it
-#     (wired in stages 3.5/3.6).
+# Trigger policy (maintainer decision, 2026-11-21): every push and every
+# PR runs the validation — not only docker-relevant paths — because the
+# in-container gate run (stage 3.3) proves the whole repository against
+# the container environment, so any commit can break it.
 #
 # Stage markers follow vault plan 0002: stage 3.2 carries the image build
 # (raw docker buildx steps — decided over a third-party build action: no new
@@ -24,27 +22,12 @@ name: SnifferEngine Docker Environment Validation
 
 on:
   push:
-    branches: ["master"]
-    paths:
-      - "docker/**"
-      - "docker-compose.yml"
-      - ".dockerignore"
-      - "rust-toolchain.toml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "scripts/check.sh"
-      - ".github/workflows/docker.yml"
+    # Every commit: the in-container gate run (stage 3.3) proves the whole
+    # repository against the container environment, so any commit can
+    # break it — no path filtering.
+    branches: ["**"]
   pull_request:
-    branches: ["master"]
-    paths:
-      - "docker/**"
-      - "docker-compose.yml"
-      - ".dockerignore"
-      - "rust-toolchain.toml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "scripts/check.sh"
-      - ".github/workflows/docker.yml"
+    branches: ["**"]
   workflow_dispatch:
   schedule:
     # Thursday 06:37 UTC — offset minute avoids the top-of-hour API spike
