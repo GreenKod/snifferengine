@@ -92,6 +92,7 @@ fn test_batching_multiple_shadows_and_cards() {
             shadow_blur: 0.0,
             is_gradient: 0.0,
             border_color_bottom: [0.0; 4],
+            transform: sniffer_render::glow::batching::IDENTITY_TRANSFORM,
         };
         assert!(
             batch.push_instance(card_inst),

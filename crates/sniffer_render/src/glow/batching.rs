@@ -2,8 +2,16 @@ use super::GlowRenderer;
 use glow::HasContext;
 use sniffer_core::math::Rect;
 
+/// Identity per-instance transform: `(scale, rotation_deg, pivot_x, pivot_y)`.
+///
+/// The vertex shader math collapses to the raw corner for this value (the
+/// zero-degree rotation matrix is exact), so producers that have not moved
+/// to instanced transforms yet render bit-identically to the pre-attribute
+/// pipeline.
+pub const IDENTITY_TRANSFORM: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
+
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct QuadInstanceData {
     pub rect_pos: [f32; 2],
     pub rect_size: [f32; 2],
@@ -18,6 +26,31 @@ pub struct QuadInstanceData {
     pub shadow_blur: f32,
     pub is_gradient: f32,
     pub border_color_bottom: [f32; 4],
+    /// Per-instance transform: `(scale, rotation in degrees, pivot_x,
+    /// pivot_y)` with the pivot in rect-local pixels. Identity is
+    /// [`IDENTITY_TRANSFORM`].
+    pub transform: [f32; 4],
+}
+
+impl Default for QuadInstanceData {
+    fn default() -> Self {
+        Self {
+            rect_pos: [0.0; 2],
+            rect_size: [0.0; 2],
+            color: [0.0; 4],
+            border_color: [0.0; 4],
+            color_bottom: [0.0; 4],
+            shape_size: [0.0; 2],
+            is_circle: 0.0,
+            is_shadow: 0.0,
+            radius: 0.0,
+            border_width: 0.0,
+            shadow_blur: 0.0,
+            is_gradient: 0.0,
+            border_color_bottom: [0.0; 4],
+            transform: IDENTITY_TRANSFORM,
+        }
+    }
 }
 
 impl QuadInstanceData {
@@ -73,6 +106,7 @@ impl QuadInstanceData {
             shadow_blur: key_blur,
             is_gradient: key_offset_y,
             border_color_bottom: [0.0; 4],
+            transform: IDENTITY_TRANSFORM,
         };
 
         (instance, shadow_rect)
@@ -154,7 +188,7 @@ impl Default for QuadBatch {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ImageInstanceData {
     pub rect_pos: [f32; 2],
     pub rect_size: [f32; 2],
@@ -162,6 +196,24 @@ pub struct ImageInstanceData {
     pub radius: f32,
     pub alpha: f32,
     pub pad: [f32; 2],
+    /// Per-instance transform: `(scale, rotation in degrees, pivot_x,
+    /// pivot_y)` with the pivot in rect-local pixels. Identity is
+    /// [`IDENTITY_TRANSFORM`].
+    pub transform: [f32; 4],
+}
+
+impl Default for ImageInstanceData {
+    fn default() -> Self {
+        Self {
+            rect_pos: [0.0; 2],
+            rect_size: [0.0; 2],
+            uv_rect: [0.0; 4],
+            radius: 0.0,
+            alpha: 0.0,
+            pad: [0.0; 2],
+            transform: IDENTITY_TRANSFORM,
+        }
+    }
 }
 
 pub struct ImageBatch {
@@ -486,6 +538,7 @@ impl GlowRenderer {
             shadow_blur: 0.0,
             is_gradient,
             border_color_bottom: b_col_bot,
+            transform: IDENTITY_TRANSFORM,
         };
 
         let _ = self.shape_batch.push_instance(instance);
@@ -549,6 +602,7 @@ impl GlowRenderer {
             shadow_blur: blur,
             is_gradient: 0.0,
             border_color_bottom: [0.0; 4],
+            transform: IDENTITY_TRANSFORM,
         };
 
         if self.shape_batch.is_full() {
@@ -661,13 +715,13 @@ mod tests {
 
     #[test]
     fn test_quad_instance_data_layout() {
-        assert_eq!(std::mem::size_of::<QuadInstanceData>(), 112);
+        assert_eq!(std::mem::size_of::<QuadInstanceData>(), 128);
         assert_eq!(std::mem::align_of::<QuadInstanceData>(), 4);
 
         let data = QuadInstanceData::default();
         let base = &raw const data as usize;
 
-        // Verify that 7 attribute blocks (each vec4 = 16 bytes) align perfectly:
+        // Verify that 8 attribute blocks (each vec4 = 16 bytes) align perfectly:
         // 1. a_bounds: rect_pos (8B) + rect_size (8B) = 16B at offset 0
         assert_eq!(&raw const data.rect_pos as usize - base, 0);
         assert_eq!(&raw const data.rect_size as usize - base, 8);
@@ -694,6 +748,10 @@ mod tests {
 
         // 7. a_border_color_bottom: border_color_bottom (16B) at offset 96
         assert_eq!(&raw const data.border_color_bottom as usize - base, 96);
+
+        // 8. a_transform: transform (scale, rotation, pivot) (16B) at offset 112
+        assert_eq!(&raw const data.transform as usize - base, 112);
+        assert_eq!(data.transform, IDENTITY_TRANSFORM);
     }
 
     #[test]
@@ -716,8 +774,8 @@ mod tests {
         assert!(!batch.push_instance(inst));
         assert_eq!(batch.len(), 4);
 
-        // Raw byte representation size check: 4 instances * 112 bytes = 448 bytes
-        assert_eq!(batch.as_bytes().len(), 4 * 112);
+        // Raw byte representation size check: 4 instances * 128 bytes = 512 bytes
+        assert_eq!(batch.as_bytes().len(), 4 * 128);
 
         // Clear preserves buffer allocation
         batch.clear();
@@ -754,6 +812,7 @@ mod tests {
             shadow_blur: 0.0,
             is_gradient: 1.0,
             border_color_bottom: b_col,
+            transform: IDENTITY_TRANSFORM,
         };
 
         assert_eq!(instance.rect_pos, [10.0, 20.0]);
@@ -866,7 +925,7 @@ mod tests {
 
     #[test]
     fn test_image_instance_data_layout() {
-        assert_eq!(std::mem::size_of::<ImageInstanceData>(), 48);
+        assert_eq!(std::mem::size_of::<ImageInstanceData>(), 64);
         assert_eq!(std::mem::align_of::<ImageInstanceData>(), 4);
 
         let data = ImageInstanceData::default();
@@ -883,6 +942,10 @@ mod tests {
         assert_eq!(&raw const data.radius as usize - base, 32);
         assert_eq!(&raw const data.alpha as usize - base, 36);
         assert_eq!(&raw const data.pad as usize - base, 40);
+
+        // 4. a_transform: transform (scale, rotation, pivot) (16B) at offset 48
+        assert_eq!(&raw const data.transform as usize - base, 48);
+        assert_eq!(data.transform, IDENTITY_TRANSFORM);
     }
 
     #[test]
@@ -900,6 +963,7 @@ mod tests {
             radius: 8.0,
             alpha: 1.0,
             pad: [0.0, 0.0],
+            transform: IDENTITY_TRANSFORM,
         };
 
         assert!(batch.push_instance(inst));
@@ -913,8 +977,8 @@ mod tests {
         assert!(!batch.push_instance(inst));
         assert_eq!(batch.len(), 4);
 
-        // 4 instances * 48 bytes = 192 bytes
-        assert_eq!(batch.as_bytes().len(), 4 * 48);
+        // 4 instances * 64 bytes = 256 bytes
+        assert_eq!(batch.as_bytes().len(), 4 * 64);
 
         batch.clear();
         assert!(batch.is_empty());

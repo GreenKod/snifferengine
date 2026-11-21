@@ -4,6 +4,7 @@ layout(location = 0) in vec2 position;
 layout(location = 1) in vec4 a_bounds;    // rect_pos.xy, rect_size.zw
 layout(location = 2) in vec4 a_uv_bounds; // uv_min.xy, uv_max.zw
 layout(location = 3) in vec4 a_params;    // radius, alpha, _pad1, _pad2
+layout(location = 4) in vec4 a_transform; // scale, rotation deg, pivot xy
 
 out vec2 v_uv;
 out vec2 v_local_pos;
@@ -28,11 +29,24 @@ void main() {
     vec2 rect_pos = (u_instanced == 1) ? a_bounds.xy : u_rect_pos;
     vec2 rect_size = (u_instanced == 1) ? a_bounds.zw : u_rect_size;
 
-    vec3 pixel_pos_3 = u_transform * vec3(position * rect_size + rect_pos, 1.0);
-    vec2 pixel_pos = pixel_pos_3.xy;
-    v_screen_pos = pixel_pos;
+    // The fragment-space varyings stay in raw local coordinates; the
+    // per-instance transform applies to geometry only.
     v_local_pos = position * rect_size;
     v_rect_size = rect_size;
+
+    // Per-instance transform: scale, rotation (degrees), pivot in
+    // rect-local pixels. Identity (1, 0, 0, 0) is an exact no-op, so
+    // producers that have not moved to instanced transforms render
+    // bit-identically to the pre-attribute pipeline.
+    highp vec2 delta = v_local_pos - a_transform.zw;
+    highp float angle = radians(a_transform.y);
+    highp vec2 scaled_rotated = mat2(cos(angle), sin(angle), -sin(angle), cos(angle))
+        * (delta * a_transform.x);
+    highp vec2 transformed_local = a_transform.zw + scaled_rotated;
+
+    vec3 pixel_pos_3 = u_transform * vec3(transformed_local + rect_pos, 1.0);
+    vec2 pixel_pos = pixel_pos_3.xy;
+    v_screen_pos = pixel_pos;
 
     if (u_instanced == 1) {
         v_uv = mix(a_uv_bounds.xy, a_uv_bounds.zw, position);

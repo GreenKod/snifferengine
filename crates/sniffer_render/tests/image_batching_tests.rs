@@ -57,6 +57,7 @@ fn simulate_batch_draw(n: usize, batch_capacity: usize) -> (usize, usize) {
             radius: 8.0,
             alpha: 1.0,
             pad: [0.0, 0.0],
+            transform: sniffer_render::glow::batching::IDENTITY_TRANSFORM,
         };
 
         if batch.is_full() {
@@ -178,8 +179,8 @@ fn test_batch_overflow_auto_flush_continuity() {
 fn test_image_instance_memory_footprint() {
     assert_eq!(
         std::mem::size_of::<ImageInstanceData>(),
-        48,
-        "ImageInstanceData must be exactly 48 bytes (3 × vec4)"
+        64,
+        "ImageInstanceData must be exactly 64 bytes (4 × vec4)"
     );
     assert_eq!(
         std::mem::align_of::<ImageInstanceData>(),
@@ -207,6 +208,7 @@ fn test_batch_fill_60_icons_cpu_throughput() {
             radius: 8.0,
             alpha: 1.0,
             pad: [0.0, 0.0],
+            transform: sniffer_render::glow::batching::IDENTITY_TRANSFORM,
         };
         assert!(batch.push_instance(inst));
     }
