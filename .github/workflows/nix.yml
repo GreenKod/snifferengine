@@ -204,8 +204,9 @@ jobs:
           restore-keys: nix-downloads-v1-
 
       # Inventory of the pinned toolchain: proves which rustlib targets the
-      # aggregated rust-bin toolchain actually carries (kept as a cheap
-      # permanent diagnostic).
+      # aggregated rust-bin toolchain actually carries, and that rustc/cargo
+      # really resolve into the pinned closure instead of a host rustup shim
+      # (kept as a cheap permanent diagnostic).
       - name: Diagnose the Pinned Android Toolchain
         run: |
           # shellcheck disable=SC2016
@@ -213,7 +214,18 @@ jobs:
           # bash, not in this outer step shell.
           nix-shell shell-android.nix --pure --run '
             set -euo pipefail
+            echo "--- PATH entries ---"
+            printf "%s\n" "${PATH}" | tr ":" "\n"
+            echo "--- resolution ---"
+            echo "rustc    : $(command -v rustc)"
+            echo "cargo    : $(command -v cargo)"
+            echo "rustc -> : $(readlink -f "$(command -v rustc)")"
+            echo "cargo -> : $(readlink -f "$(command -v cargo)")"
+            echo "--- rustup / cargo env ---"
+            env | grep -E "^(RUST|CARGO)" | sort || true
+            echo "--- versions ---"
             echo "rustc  : $(rustc --version)"
+            echo "cargo  : $(cargo --version)"
             echo "sysroot: $(rustc --print sysroot)"
             echo "--- rustlib inventory ---"
             ls "$(rustc --print sysroot)/lib/rustlib"
@@ -231,6 +243,10 @@ jobs:
             set -euo pipefail
             echo "::group::Android environment (asserted by the shell hook)"
             echo "NDK: ${ANDROID_NDK_ROOT}"
+            echo "::endgroup::"
+            echo "::group::Toolchain resolution"
+            echo "rustc: $(command -v rustc) -> $(readlink -f "$(command -v rustc)")"
+            echo "cargo: $(command -v cargo) -> $(readlink -f "$(command -v cargo)")"
             echo "::endgroup::"
             echo "::group::Android (ARM64) Check & Clippy"
             cargo ndk --target aarch64-linux-android clippy --locked --workspace --all-targets -- -D warnings

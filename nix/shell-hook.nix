@@ -19,7 +19,7 @@
 #   }
 # ==============================================================================
 
-{ pkgs, expectedChannel, nixpkgsRev, androidSdk ? null, ndkVersion ? null }:
+{ pkgs, expectedChannel, nixpkgsRev, rustToolchain, androidSdk ? null, ndkVersion ? null }:
 
 let
   # Android environment exports — only generated when an SDK composition is
@@ -79,6 +79,24 @@ in
   echo   "╚══════════════════════════════════════════════════════════════════╝"
   printf "''${_C_RESET}\n"
 
+  # -- Step 0 — The pinned toolchain wins over host shims ----------------------
+  # The first validate-android run showed a rustup proxy running inside the
+  # "pure" shell: it read rust-toolchain.toml, auto-installed 1.98.0 and
+  # built with a host-only sysroot (E0463: no aarch64-linux-android std).
+  # Version parity alone cannot catch that, because rustup reports the same
+  # channel. Make the pinned closure authoritative: prepend its bin, refuse
+  # rustup auto-install, and pin CARGO/RUSTC (cargo-ndk spawns `$CARGO`,
+  # cargo spawns `$RUSTC`). The resolution assertion below fails loudly if
+  # a shim still wins.
+  export PATH="${rustToolchain}/bin:''${PATH}"
+  export RUSTUP_AUTO_INSTALL=0
+
+  # cargo-ndk spawns `$CARGO` (src/cargo.rs) and cargo spawns `$RUSTC`;
+  # pin both explicitly so an inherited variable cannot route the build
+  # back to a host toolchain.
+  export CARGO="${rustToolchain}/bin/cargo"
+  export RUSTC="${rustToolchain}/bin/rustc"
+
   # -- Step 1 — Toolchain parity assertion (ADR 001 §3.3) -----------------------
   _gh_group "Toolchain parity (rust-toolchain.toml)"
 
@@ -104,8 +122,28 @@ in
     exit 1
   fi
 
+  # Version parity alone is not enough: a host shim that auto-installs the
+  # same channel reports the right version while building with a host-only
+  # sysroot. Prove that rustc AND cargo actually resolve into the pinned
+  # closure.
+  _expected_rustc="$(readlink -f "${rustToolchain}/bin/rustc")"
+  _actual_rustc="$(readlink -f "$(command -v rustc)")"
+  _expected_cargo="$(readlink -f "${rustToolchain}/bin/cargo")"
+  _actual_cargo="$(readlink -f "$(command -v cargo)")"
+
+  if [ "''${_actual_rustc}" != "''${_expected_rustc}" ] || [ "''${_actual_cargo}" != "''${_expected_cargo}" ]; then
+    _gh_error "Toolchain resolution FAILED (a host shim is shadowing the pinned closure)"
+    printf "       expected rustc : %s\n" "''${_expected_rustc}"
+    printf "       resolved rustc : %s\n" "''${_actual_rustc}"
+    printf "       expected cargo : %s\n" "''${_expected_cargo}"
+    printf "       resolved cargo : %s\n" "''${_actual_cargo}"
+    printf "       Remove the host toolchain from PATH or use nix-shell --pure.\n"
+    exit 1
+  fi
+
   _gh_kv "expected" "''${_expected_channel} (rust-toolchain.toml)"
   _gh_kv "actual"   "''${_actual}"
+  _gh_kv "toolchain" "${rustToolchain}"
   _gh_endgroup
 
   # -- Step 2 — Environment exports ---------------------------------------------

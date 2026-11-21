@@ -47,6 +47,7 @@ pkgs.mkShell {
     inherit pkgs;
     expectedChannel = rust.channel;
     nixpkgsRev = pins.nixpkgs.rev;
+    rustToolchain = rust.toolchain;
     androidSdk = android.sdk;
     ndkVersion = android.ndkVersion;
   };
